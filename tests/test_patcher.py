@@ -45,6 +45,10 @@ class PatchSpecValidationTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(PatchSpecError):
                 validate_patch_spec(proposal(path=path))
 
+    def test_rejects_non_python_files_inside_allowed_directories(self):
+        with self.assertRaisesRegex(PatchSpecError, "Python source"):
+            validate_patch_spec(proposal(path="agent/config.json"))
+
     def test_rejects_paths_outside_allowlist(self):
         with self.assertRaisesRegex(PatchSpecError, "agent/ or tests/"):
             validate_patch_spec(proposal(path=".github/workflows/tests.yml"))

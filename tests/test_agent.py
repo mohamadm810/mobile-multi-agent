@@ -31,18 +31,17 @@ class GeminiResponseTests(unittest.TestCase):
     @patch("agent.gemini.time.sleep")
     @patch("agent.gemini.urllib.request.urlopen")
     def test_uses_fallback_model_after_primary_503(self, mocked_urlopen, _sleep):
-        error1 = urllib.error.HTTPError("https://example.invalid", 503, "busy", {}, None)
-        error2 = urllib.error.HTTPError("https://example.invalid", 503, "busy", {}, None)
+        errors = [urllib.error.HTTPError("https://example.invalid", 503, "busy", {}, None) for _ in range(3)]
         success = MagicMock()
         success.__enter__.return_value.read.return_value = json.dumps({
             "candidates": [{"content": {"parts": [{"text": "fallback ok"}]}}]
         }).encode()
-        mocked_urlopen.side_effect = [error1, error2, success]
+        mocked_urlopen.side_effect = [*errors, success]
         with patch("agent.gemini.MODEL", "primary-model"), patch(
             "agent.gemini.FALLBACK_MODELS", ["fallback-model"]
         ):
             self.assertEqual(generate("role", "prompt"), "fallback ok")
-        self.assertEqual(mocked_urlopen.call_count, 3)
+        self.assertEqual(mocked_urlopen.call_count, 4)
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
 

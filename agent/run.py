@@ -157,6 +157,12 @@ def read_team_registry():
         active.append({"name": name.strip(), "mission": mission.strip(), "prompt": prompt})
     data["version"] = 1
     data["custom_agents"] = active[:MAX_CUSTOM_AGENTS]
+    overrides = data.get("role_overrides", {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+    data["role_overrides"] = {key: value for key, value in overrides.items()
+                              if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
+                              and isinstance(value, str) and 50 <= len(value) <= 4000}
     data["archived_agents"] = data.get("archived_agents", [])[-50:] if isinstance(data.get("archived_agents", []), list) else []
     return data
 
@@ -180,14 +186,28 @@ def apply_hr_decisions(output, registry):
         raise ValueError("HR exceeded the per-run staffing action limit.")
     applied, archived = [], registry.setdefault("archived_agents", [])
     active = registry.setdefault("custom_agents", [])
+    overrides = registry.setdefault("role_overrides", {})
     for action in actions:
         if not isinstance(action, dict):
             raise ValueError("Malformed HR staffing action.")
         kind, name = action.get("action"), action.get("name")
-        if not isinstance(name, str) or name in CORE_AGENT_NAMES:
-            raise ValueError("HR cannot change protected core roles or the Central Supervisor.")
+        if not isinstance(name, str) or name in {"Central Supervisor", "Agent Recruitment & Governance"}:
+            raise ValueError("HR cannot change the Central Supervisor or its own role.")
         existing = next((agent for agent in active if agent["name"] == name), None)
-        if kind == "hire":
+        if kind == "revise":
+            prompt = action.get("prompt")
+            if not isinstance(prompt, str) or not 50 <= len(prompt) <= 4000:
+                raise ValueError("A revised agent prompt must contain 50 to 4000 characters.")
+            if existing:
+                existing["prompt"] = prompt
+                if isinstance(action.get("mission"), str) and 3 <= len(action["mission"].strip()) <= 300:
+                    existing["mission"] = action["mission"].strip()
+            elif name in CORE_AGENT_NAMES:
+                overrides[name] = prompt
+            else:
+                raise ValueError("Only an active agent can be revised.")
+            applied.append(f"Updated role instructions for {name}; effective next cycle.")
+        elif kind == "hire":
             mission, prompt = action.get("mission"), action.get("prompt")
             if existing or any(x.get("name") == name for x in archived):
                 raise ValueError("Duplicate or previously retired custom-agent name.")
@@ -212,6 +232,7 @@ def apply_hr_decisions(output, registry):
         else:
             raise ValueError("Unsupported HR action.")
     registry["archived_agents"] = archived[-50:]
+    registry["role_overrides"] = overrides
     return decision, applied
 
 
@@ -255,6 +276,7 @@ def run_cycle(request=None, generator=generate):
         "Documentation Agent": ["Software Architect", "Independent Tester", "Independent Reviewer", "Central Supervisor"],
     }
     for name, role in STAGES:
+        role = registry["role_overrides"].get(name, role)
         selected = prior_for_stage[name]
         prior = "\n\n".join(
             f"## {key}\n{outputs[key][:3500]}" for key in selected if key in outputs
@@ -375,7 +397,8 @@ def run_cycle(request=None, generator=generate):
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
         "role_metrics": role_metrics,
-        "team_registry": "workspace/TEAM.json",\n        "active_custom_agents": [item["name"] for item in registry["custom_agents"]],\n        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],\n        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
+        "team_registry": "workspace/TEAM.json",
+        "active_custom_agents": [item["name"] for item in registry["custom_agents"]],\n        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],\n        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
         "models_used": models_used,
         "models_attempted": models_attempted,
         "unit_test_methods": unit_test_methods,

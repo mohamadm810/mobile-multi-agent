@@ -489,6 +489,18 @@ class AgentGovernanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Central Supervisor"):
             apply_hr_decisions(payload, registry)
 
+
+    def test_hr_cannot_hire_duplicate_core_role(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
+        payload = json.dumps({"actions": [{
+            "action": "hire", "name": " Independent Reviewer ",
+            "mission": "A duplicate reviewer role", 
+            "prompt": "A sufficiently long specialist prompt " * 3,
+        }]})
+        with self.assertRaisesRegex(ValueError, "duplicate of a protected core role"):
+            apply_hr_decisions(payload, registry)
+
     def test_hr_rejects_invalid_json_without_changes(self):
         from agent.run import apply_hr_decisions
         registry = {"version": 1, "custom_agents": [], "archived_agents": []}

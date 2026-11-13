@@ -148,6 +148,8 @@ def read_team_registry():
         if not isinstance(item, dict):
             continue
         name, prompt, mission = item.get("name"), item.get("prompt"), item.get("mission")
+        if isinstance(name, str):
+            name = name.strip()
         if (not isinstance(name, str) or not isinstance(prompt, str)
                 or not isinstance(mission, str) or name in CORE_AGENT_NAMES
                 or not 3 <= len(name.strip()) <= 60 or not 50 <= len(prompt) <= 4000
@@ -192,6 +194,8 @@ def apply_hr_decisions(output, registry):
         if not isinstance(action, dict):
             raise ValueError("Malformed HR staffing action.")
         kind, name = action.get("action"), action.get("name")
+        if isinstance(name, str):
+            name = name.strip()
         if not isinstance(name, str) or name in {"Central Supervisor", "Agent Recruitment & Governance"}:
             raise ValueError("HR cannot change the Central Supervisor or its own role.")
         existing = next((agent for agent in active if agent["name"] == name), None)
@@ -209,6 +213,8 @@ def apply_hr_decisions(output, registry):
                 raise ValueError("Only an active agent can be revised.")
             applied.append(f"Updated role instructions for {name}; effective next cycle.")
         elif kind == "hire":
+            if name in CORE_AGENT_NAMES:
+                raise ValueError("HR cannot create a duplicate of a protected core role.")
             mission, prompt = action.get("mission"), action.get("prompt")
             if existing or any(x.get("name") == name for x in archived):
                 raise ValueError("Duplicate or previously retired custom-agent name.")

@@ -71,5 +71,6 @@ jobs:
           path: |
             workspace/REPORT.md
             workspace/STATE.json
+            workspace/CHECKPOINT.json
           if-no-files-found: warn
           retention-days: 14

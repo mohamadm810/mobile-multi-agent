@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import tempfile
@@ -91,6 +92,21 @@ class GeminiResponseTests(unittest.TestCase):
                 generate("role", "prompt")
         self.assertEqual(mocked_urlopen.call_count, 1)
 
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_http_error_detail_redacts_api_key(self, mocked_urlopen):
+        mocked_urlopen.side_effect = urllib.error.HTTPError(
+            "https://example.invalid", 403, "forbidden", {},
+            io.BytesIO(b"server echoed test-key in its response")
+        )
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", []):
+            with self.assertRaises(AgentError) as caught:
+                generate("role", "prompt")
+        self.assertNotIn("test-key", str(caught.exception))
+        self.assertIn("[REDACTED]", str(caught.exception))
+
 
 class FailureStateTests(unittest.TestCase):
     def test_failure_status_is_persisted(self):
@@ -104,6 +120,14 @@ class FailureStateTests(unittest.TestCase):
             saved = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["status"], "failed")
             self.assertIn("HTTP 503", saved["last_error"])
+
+
+class RepositoryEvidenceTests(unittest.TestCase):
+    def test_repository_context_includes_complete_test_file(self):
+        from agent.run import read_repository_context
+        context = read_repository_context()
+        self.assertIn("def test_non_retryable_403_fails_without_fallback", context)
+        self.assertIn("if __name__ == \"__main__\":", context)
 
 
 class RequestValidationTests(unittest.TestCase):

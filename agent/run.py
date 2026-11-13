@@ -672,8 +672,9 @@ def write_failure_state(error):
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
     try:
         journal = RunEventJournal(WORKSPACE / "EVENTS.jsonl", os.getenv("GITHUB_RUN_ID") or "local")
+        safe_error_type = type(error).__name__ if isinstance(error, BaseException) else "RunError"
         journal.record("run_paused" if checkpoint_valid else "run_failed",
-                       status=recovery_status, error_type=str(error).split(":", 1)[0][:80])
+                       status=recovery_status, error_type=safe_error_type)
     except (OSError, ValueError):
         pass
 

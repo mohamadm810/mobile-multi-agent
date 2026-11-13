@@ -73,6 +73,8 @@ def call_with_retries(
     for attempt in range(max_attempts):
         if circuit_breaker is not None:
             circuit_breaker.before_call()
+        if clock() - started >= max_elapsed_seconds:
+            raise TimeoutError("Operation exceeded its total execution budget.")
         try:
             result = operation()
             if clock() - started > max_elapsed_seconds:
@@ -82,8 +84,11 @@ def call_with_retries(
             return result
         except Exception as exc:
             can_retry = retryable(exc)
-            if circuit_breaker is not None and can_retry:
-                circuit_breaker.record_failure()
+            if circuit_breaker is not None:
+                if can_retry:
+                    circuit_breaker.record_failure()
+                else:
+                    circuit_breaker.half_open_probe = False
             elapsed = clock() - started
             if attempt + 1 >= max_attempts or not can_retry or elapsed >= max_elapsed_seconds:
                 raise

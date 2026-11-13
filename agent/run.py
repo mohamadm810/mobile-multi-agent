@@ -427,8 +427,8 @@ def run_cycle(request=None, generator=generate):
         )
         started = __import__("time").perf_counter()
         outputs[name] = call_with_retries(
-            lambda: generator(role, prompt), max_attempts=3,
-            max_elapsed_seconds=180.0, circuit_breaker=dependency_breaker,
+            lambda: generator(role, prompt), max_attempts=1,
+            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
         )
         checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
@@ -450,8 +450,8 @@ def run_cycle(request=None, generator=generate):
             + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
         )
         outputs[name] = call_with_retries(
-            lambda: generator(custom["prompt"], custom_prompt), max_attempts=3,
-            max_elapsed_seconds=180.0, circuit_breaker=dependency_breaker,
+            lambda: generator(custom["prompt"], custom_prompt), max_attempts=1,
+            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
         )
         checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
@@ -480,8 +480,8 @@ def run_cycle(request=None, generator=generate):
     hr_output = checkpoint.get_stage("__hr_output__")
     if hr_output is None:
         hr_output = call_with_retries(
-            lambda: generator(HR, hr_prompt), max_attempts=3,
-            max_elapsed_seconds=180.0, circuit_breaker=dependency_breaker,
+            lambda: generator(HR, hr_prompt), max_attempts=1,
+            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
         )
         checkpoint.record_stage("__hr_output__", hr_output)
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)

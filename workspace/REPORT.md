@@ -1,10 +1,12 @@
 # گزارش اجرای تیم ایجنت
 
-زمان اجرا (UTC): `2026-11-13T09:18:16.411746+00:00`
+زمان اجرا (UTC): `2026-11-13T09:21:33.544994+00:00`
 
-شناسه اجرای GitHub: `43400136646`
+شناسه اجرای GitHub: `43400587088`
 
-نسخه سورس اجراشده: `db2d8029547aa19d4b273852c17e3a78d407471e`
+نسخه سورس اجراشده: `2c1df392a4f7990591e580bc506ceda128c7f9db`
+
+تعداد متدهای تست موجود در سورس: `17`
 
 > این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.
 
@@ -18,28 +20,26 @@
 ## Requirements Analyst
 
 ### Functional Requirements
-1. **Multi-Agent Cycle Management:** Execute a seven-role planning team sequence (`Requirements Analyst`, `Software Architect`, `Developer Planner`, `Independent Tester`, `Independent Reviewer`, `Central Supervisor`, `Documentation Agent`) using contextual pipeline passing.
-2. **Gemini API Integration:** Send structured prompts with system instructions and user contents to the Gemini API, enforcing output token limits, timeouts, and API key authentication via environment variables (`GEMINI_API_KEY`).
-3. **Retry and Fallback Logic:** Automatically retry transient network/HTTP errors (`429, 500, 502, 503, 504`, timeouts, and transport errors) up to 3 attempts per model, and fall back to subsequent models defined in `GEMINI_FALLBACK_MODELS`.
-4. **State and Report Persistence:** Generate and persist execution reports (`workspace/REPORT.md`) and state tracking (`workspace/STATE.json`) containing run metadata, models attempted/used, and timestamps.
-5. **Request Validation:** Validate `workspace/REQUEST.md` inputs to reject empty, comment-only, or oversized requests exceeding `MAX_REQUEST_CHARS`.
+- **Seven-Role Multi-Agent Cycle:** Execute sequentially through Analyst, Architect, Developer, Tester, Reviewer, Manager, and Documentation roles using dynamic prompt contexts and model responses.
+- **Gemini API Integration:** Send structured generation payloads (system instruction, user prompt, configuration) via `urllib` and extract text or throw descriptive `AgentError`.
+- **Retry and Fallback Mechanism:** Retry up to 3 times for network or retryable HTTP errors (429, 500, 502, 503, 504) with exponential or `Retry-After` header delays; transition to fallback models upon failure.
+- **Run Tracking & Persistence:** Track active, attempted, and successfully used models, saving output reports and state JSON to disk.
 
 ### Non-Functional Requirements
-1. **Security & Redaction:** Ensure API keys and sensitive details in HTTP error responses are redacted (`[REDACTED]`) before throwing exceptions.
-2. **Concurrency Control:** Configure GitHub Actions workflows to manage execution concurrency using group identifiers (`multi-agent-${{ github.ref }}`).
-3. **Robust Error Handling:** Persist a failure state with descriptive error snippets if the execution cycle fails.
+- **Security & Secret Redaction:** Redact API keys from exception messages, logs, and HTTP error details. Enforce strict model name matching.
+- **Safety Limits:** Reject Gemini responses exceeding 2MB and requests exceeding maximum length constraints.
+- **Concurrency & CI:** Control GitHub Actions workflow execution via concurrency locks and automated branch rebasing/pushing.
 
 ### Constraints
-1. **Analysis-Only Scope:** In this version, the system is strictly limited to analysis, planning, and reporting. Automatic project code modifications, arbitrary shell execution, and deployments are prohibited.
-2. **Evidence Authority:** Source files and tests are the absolute authority; no unverified or unimplemented behaviors may be claimed.
+- Analysis and planning mode only; no automated code modifications, arbitrary shell execution, or deployments.
+- Maximum request size: 12,000 characters; maximum output token limit configured via environment variables.
 
 ### Acceptance Criteria
-1. All repository test suites pass successfully.
-2. Requests exceeding length limits or containing only templates are rejected with clear errors.
-3. Fallback models are correctly triggered upon encountering retryable HTTP or transport failures.
+- All 17 unit tests in `tests/test_agent.py` pass successfully.
+- State and execution reports are accurately persisted under the `workspace/` directory.
 
 ### Unresolved Questions
-1. How should future execution tasks be authorized beyond manual human review of reports?
+- None.
 
 
 ---
@@ -47,82 +47,59 @@
 ## Software Architect
 
 ### Current Implementation
-- **Configuration (`agent/config.py`):** Loads `GEMINI_MODEL`, `FALLBACK_MODELS`, `MAX_OUTPUT_TOKENS`, and `GEMINI_TIMEOUT_SECONDS` via `os.getenv`, validating model name syntax with `re.fullmatch(r"[A-Za-z0-9._-]{1,100}", model_name)`.
-- **Gemini Client (`agent/gemini.py`):** Uses `urllib.request` to execute POST requests to the Gemini API (`API_URL_TEMPLATE`). Implements per-model retry up to `MAX_ATTEMPTS_PER_MODEL` (3 attempts) with exponential backoff (`_retry_delay`) for HTTP status codes `429, 500, 502, 503, 504` and transport errors (`URLError`, `TimeoutError`, `OSError`). Iterates through fallback models on unrecoverable model failures and redacts API keys from exception strings.
-- **Workflow & Orchestration (`agent/run.py` & `.github/workflows/run-agent.yml`):** Implements a seven-stage sequential execution loop passing contextual pipeline data. Persists outputs to `workspace/REPORT.md` and `workspace/STATE.json`. GitHub Actions workflow enforces concurrency grouping (`multi-agent-${{ github.ref }}`) and 15-minute timeouts.
-- **Testing (`tests/test_agent.py`):** Contains `unittest` cases covering text extraction (`_extract_text`), missing API keys, retry/fallback mechanisms for HTTP 503 and `URLError`, key redaction, input validation, and failure state persistence.
 
-### Proposed Changes
-- **Module Separation:** Extract HTTP transport logic from `agent/gemini.py` into a dedicated adapter to decouple payload serialization from network execution.
-- **Timeout Configuration:** Introduce per-stage or dynamic timeout parameters in `agent/config.py` to handle heavier payloads in later roles (e.g., `Documentation Agent`).
+- **Configuration (`agent/config.py`):** Configures Gemini model parameters via environment variables (`GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`, `MAX_OUTPUT_TOKENS`, `GEMINI_TIMEOUT_SECONDS`, `MAX_REQUEST_CHARS`) with strict regex validation (`[A-Za-z0-9._-]{1,100}`).
+- **Gemini Client & Reliability (`agent/gemini.py`):** Implements synchronous POST requests via `urllib.request` with 2MB response size limits, exception redaction for API keys, exponential backoff with `Retry-After` header parsing, and fallback model iteration upon retryable HTTP errors (429, 500, 502, 503, 504) or transport failures.
+- **Orchestration & State (`agent/run.py`):** Coordinates the seven-role pipeline sequentially (`Requirements Analyst`, `Software Architect`, `Developer Planner`, `Independent Tester`, `Independent Reviewer`, `Central Supervisor`, `Documentation Agent`), reads/writes request inputs, reports, and JSON states under `workspace/`, and extracts exact test inventories using Python `ast`.
+- **CI/CD Workflow (`.github/workflows/run-agent.yml`):** Runs tests and the planning cycle on GitHub Actions with concurrency locks, automated report/state commits, rebase-retry loops, and failure artifact retention.
+- **Unit Tests (`tests/test_agent.py`):** Comprises 17 automated unit test methods validating response extraction, error handling, retries, fallbacks, state persistence, and request boundaries.
+
+### Proposed Architecture Changes
+
+1. **Structured Logging / Observability:** Add structured JSON logging handlers to trace multi-agent role handoffs and model token metrics without changing core execution flow.
+2. **Asynchronous I/O Support:** Introduce an optional asynchronous transport wrapper around `urllib` or HTTP clients to support parallel role execution if multi-agent pipelines scale horizontally.
 
 
 ---
 
 ## Developer Planner
 
-### 1. Extract HTTP Transport Logic
-- **Objective:** Separate raw HTTP request execution and retry-delay calculation from model routing and fallback logic in `agent/gemini.py`.
-- **Files to Change:**
-  - `agent/gemini.py`
-  - `tests/test_agent.py` (Propose new unit tests for the transport adapter)
-- **Acceptance Criteria:**
-  - Transport execution is cleanly isolated into a dedicated function/class.
-  - Existing fallback and retry unit tests pass without regression.
-- **Dependencies:** None.
+- **Task 1: Structured Logging & Telemetry Integration**
+  - **Objective:** Add lightweight structured logging to trace multi-agent role transitions, API retry attempts, and active model telemetry.
+  - **Exact Existing Files to Change:** `agent/gemini.py`, `agent/run.py`, `PROPOSED: agent/logger.py`
+  - **Acceptance Criteria:** All role transitions, fallback switches, and retry delays emit structured log events without exposing API secrets. All 17 unit tests pass successfully.
+  - **Dependencies:** None.
 
-### 2. Introduce Dynamic Stage Timeouts
-- **Objective:** Add configurable timeout parameters in `agent/config.py` and `agent/run.py` to allow extended request timeouts for later roles handling large context windows.
-- **Files to Change:**
-  - `agent/config.py` PROPOSED
-  - `agent/run.py`
-- **Acceptance Criteria:**
-  - Configurable timeout overrides can be passed or loaded via environment variables per stage.
-  - Timeouts do not disrupt default `GEMINI_TIMEOUT_SECONDS` behavior.
-- **Dependencies:** Task 1.
+- **Task 2: Enhanced Timeout and Payload Size Controls**
+  - **Objective:** Expose granular timeout configurations per agent stage and validate request payloads against strict memory bounds before transmission.
+  - **Exact Existing Files to Change:** `agent/config.py`,
+ `agent/gemini.py`, `tests/test_agent.py`
+  - **Acceptance Criteria:** Configurable timeouts per stage function correctly; oversized requests are rejected prior to network calls; unit test suite covers new boundary conditions.
+  - **Dependencies:** Task 1.
 
-### 3. Comprehensive Error Logging Enhancement
-- **Objective:** Enhance structured logging of network exceptions and fallback transitions in `agent/gemini.py` without leaking API keys or secrets.
-- **Files to Change:**
-  - `agent/gemini.py`
-- **Acceptance Criteria:**
-  - All retry attempts and fallback switches are clearly tracked with safe, redacted log messages.
-  - Unit tests verify that sensitive data remains redacted in logs.
-- **Dependencies:** Task 1.
+- **Task 3: CI Artifact & State Resilience Hardening**
+  - **Objective:** Improve GitHub Actions workflow reliability by adding explicit pre-commit checks and robust artifact validation for state files.
+  - **Exact Existing Files to Change:** `.github/workflows/run-agent.yml`, `agent/run.py`
+  - **Acceptance Criteria:** Workflow successfully commits reports and state JSON under race conditions, preserving failure artifacts if publishing encounters persistent conflicts.
+  - **Dependencies:** Task 2.
 
 
 ---
 
 ## Independent Tester
 
-### Existing Test Coverage
-`tests/test_agent.py` contains 11 unit tests covering:
-- Text chunk extraction (`_extract_text`) and validation errors (empty response, missing candidates).
-- Missing API key detection (`test_missing_key_fails_before_network`).
-- Model fallback behavior on 503 HTTP errors and transport/URL errors (`test_uses_fallback_model_after_primary_503`, `test_transport_errors_retry_then_use_fallback`).
-- Run tracking reset (`test_reset_run_tracking_clears_models_and_restores_primary`).
-- Non-retryable HTTP 403 error suppression of fallback (`test_non_retryable_403_fails_without_fallback`).
-- API key redaction in HTTP error details (`test_http_error_detail_redacts_api_key`).
-- Failure state persistence (`test_failure_status_is_persisted`).
-- Repository context building (`test_repository_context_includes_complete_test_file`).
-- Request validation for empty and oversized payloads (`RequestValidationTests`).
+### 1. Existing Test Coverage vs. Proposed Tests
+- **Existing Test Coverage:** The repository contains exactly 17 unit test methods inside `tests/test_agent.py` (`GeminiResponseTests`, `FailureStateTests`, `RepositoryEvidenceTests`, `OrchestrationTests`, `RequestValidationTests`). They cover response extraction, missing API key aborts, fallback transitions on 503/URLError, tracking resets, non-retryable 403 handling, API key redaction, 2MB response limits, invalid `Retry-After` handling, failure state persistence, repository context bundling, documentation agent injection, and request size/empty boundary checks.
+- **Proposed Tests:** Expand test coverage for concurrent GitHub Action workflow locks, invalid model regex matching in `config.py`, malformed JSON responses from Gemini API, and edge cases where `Retry-After` headers contain extreme integer values or negative numbers.
 
-### Proposed Tests
-1. **Live API Fallback Simulation Test:** A mock-driven test verifying that when a primary model exhausts its 3 retry attempts via a mixture of 429 and 503 errors, `generate()` successfully pivots to the exact sequence listed in `FALLBACK_MODELS` and logs the used models.
-2. **Exceeded Response Size Limit Test:** A mock test ensuring `_generate_with_model` raises `AgentError` when the raw response body exceeds the 2 MB safety threshold (`2_000_000` bytes).
-3. **Invalid Model Name Config Test:** A unit test validating that `agent/config.py` correctly raises `ValueError` when an environment variable provides a model name violating the regex pattern `[A-Za-z0-9._-]{1,100}`.
+### 2. Untested Failure Paths, Edge Cases, and Security Risks
+- **Failure Path:** If the Gemini API returns a 200 OK status code with malformed JSON or an unexpected schema (missing `candidates` entirely or lacking content parts deeper down), `_extract_text` or `json.loads` might raise unhandled parser exceptions outside `AgentError`.
+- **Edge Case:** An invalid model name injected via environment variables containing special shell characters or path traversal elements is caught by regex, but fallback configuration parsing needs additional test assertions.
+- **Security Risk:** If an HTTP error body echoes the API key in a non-standard header or multi-line format, partial substring matching may fail to redact secrets completely before logging.
 
-### Untested Failure Paths & Edge Cases
-- **2 MB Response Limit:** `agent/gemini.py` enforces a `2_000_000` byte safety cutoff on responses via `response.read(2_000_001)`, but no test exercises this branch.
-- **Malformed Retry-After Header:** `_retry_delay` catches string parsing exceptions on invalid `Retry-After` headers, but this fallback parsing behavior lacks explicit test validation.
-- **Concurrent Git Push Race:** `.github/workflows/run-agent.yml` attempts up to 3 git rebase/push loops during commit races; this concurrency mechanism cannot be unit-tested locally.
-
-### Security Risks
-- **Secret Leakage in Tracebacks:** While `_generate_with_model` redacts API keys from HTTP error byte streams (`detail.replace(key, "[REDACTED]")`), unexpected exceptions raised outside this block (e.g., standard library URL errors containing query strings) could potentially expose keys in logs.
-
-### Measurable Expected Results
-- All existing and proposed unit tests execute successfully in under 2 seconds via `python -m unittest`.
-- Response size violations throw `AgentError` containing `"exceeded the 2 MB safety limit"`.
+### 3. Measurable Expected Results
+- Execution of `python -m unittest tests/test_agent.py` completes successfully, confirming all 17 unit tests pass.
+- Network timeouts and 2MB payload limits strictly reject oversized or hanging requests within configured constraints.
 
 
 ---
@@ -130,77 +107,76 @@
 ## Independent Reviewer
 
 ### BLOCKING ISSUES
-- None identified in the current source code or test suite.
+- None.
 
 ### NON-BLOCKING ISSUES
-1. **Unexercised Code Paths:** The 2 MB response size limit in `agent/gemini.py` (`response.read(2_000_001)` and subsequent check) and malformed `Retry-After` header parsing in `_retry_delay` lack dedicated unit tests in `tests/test_agent.py`.
-2. **Potential Secret Exposure Scope:** API key redaction is correctly implemented inside `_generate_with_model` HTTP error handling, but transport-level errors or unhandled exceptions occurring outside this scope could theoretically bypass string sanitization.
+- The Software Architect role proposed creating `agent/logger.py` and asynchronous I/O support without immediate necessity or current implementation backing in the source evidence.
 
 ### VERIFIED CLAIMS
-1. **Repository Authority & Evidence:** All source files (`agent/config.py`, `agent/gemini.py`, `agent/run.py`, `agent/roles.py`, `tests/test_agent.py`, `.github/workflows/run-agent.yml`) match the provided codebase precisely.
-2. **Test Suite Coverage:** `tests/test_agent.py` contains 11 verified test cases covering request validation, text extraction, API key validation, HTTP/transport retries, fallback switching, run tracking resets, error key redaction, and failure state persistence.
-3. **Safety Limits:** Input size constraints (`MAX_REQUEST_CHARS`), output token limits, and regex validation for model names in `agent/config.py` are fully implemented and verified.
+- The test inventory extracted via `ast` from `tests/test_agent.py` contains exactly 17 unit test methods across five test classes.
+- Core reliability mechanisms (`urllib` request handling, 2MB payload safety limits, API key redaction, exponential backoff, and fallback model iterations) are fully implemented in `agent/gemini.py` and `agent/config.py`.
+- The seven-role sequence and workspace persistence are fully coded in `agent/run.py`.
 
 ### CORRECTIONS REQUIRED
-- None. Prior roles correctly distinguished between source-level implementation, simulated unit tests, and live execution evidence.
+- Ensure future architectural plans refrain from proposing new unverified modules (`agent/logger.py`) unless explicitly requested.
 
 
 ---
 
 ## Central Supervisor
 
-### PROJECT GOAL
-Evaluate the multi-agent repository, maintain pipeline stability, and provide a decision-ready execution and improvement plan without performing automated code changes or deployments.
+### Project Goal
+Evaluate the multi-agent planning repository, verify current implementation and 17 unit tests, and provide a decision-ready execution plan for system stability.
 
-### VERIFIED STATUS
-- **Repository Implementation:** Seven-role sequential pipeline (`agent/run.py`), Gemini API client with exponential backoff retry and fallback routing (`agent/gemini.py`), strict configuration validation (`agent/config.py`), and GitHub Actions concurrency workflow are fully implemented and verified.
-- **Test Suite:** 11 `unittest` cases in `tests/test_agent.py` pass successfully, covering input validation, text extraction, API key validation, error redaction, run resets, and failure state persistence.
-- **Live Execution:** The current cycle successfully executed all seven roles via the Gemini API using `gemini-3.5-flash-lite`.
+### Verified Status
+- Seven-role orchestration, Gemini API integration, retry/fallback mechanisms, workspace persistence, and API key redaction are fully implemented across `agent/config.py`, `agent/gemini.py`, and `agent/run.py`.
+- Exactly 17 unit test methods exist in `tests/test_agent.py`.
+- CI/CD workflow `.github/workflows/run-agent.yml` automates execution, concurrency locking, and artifact preservation.
 
-### TOP RISKS
-1. **Unexercised Safety Limits:** The 2 MB response size cutoff and malformed `Retry-After` header parsing paths lack explicit unit test coverage.
-2. **Secret Leakage in Broad Tracebacks:** Unhandled transport exceptions outside `_generate_with_model` could potentially expose keys in logs.
-3. **GitHub Workflow Concurrency Races:** Git push retries during parallel workflow runs depend on external GitHub Actions execution.
+### Top Risks
+1. Malformed JSON or unexpected non-candidate schemas from Gemini API causing unhandled parsing errors.
+2. Edge cases in `Retry-After` header parsing (e.g., extreme values or negative numbers).
+3. Secret leakage if non-standard HTTP error body formats fail partial substring redaction.
 
-### PRIORITIZED PLAN
-1. **Add 2 MB Response Test**
-   - *Objective:* Test response size enforcement in `agent/gemini.py`.
-   - *Files:* `tests/test_agent.py` (PROPOSED).
-   - *Dependencies:* None.
-   - *Acceptance Criteria:* Test verifies `AgentError` is raised when responses exceed 2 MB.
-2. **Add Retry-After Header Test**
-   - *Objective:* Test robust handling of malformed `Retry-After` HTTP headers.
-   - *Files:* `tests/test_agent.py` (PROPOSED).
-   - *Dependencies:* None.
-   - *Acceptance Criteria:* Test verifies fallback delay defaults correctly on invalid header values.
-3. **Isolate Transport Adapter**
-   - *Objective:* Decouple raw HTTP execution from model routing.
-   - *Files:* `agent/gemini.py`, `tests/test_agent.py` (PROPOSED).
-   - *Dependencies:* Tasks 1 & 2.
-   - *Acceptance Criteria:* Clean transport isolation with zero regression in fallback/retry unit tests.
+### Prioritized Plan
+1. **Task 1: Expand Parser & Error Safeguards**
+   - **Objective:** Ensure robust handling of malformed JSON and unexpected schemas in `agent/gemini.py`.
+   - **Dependencies:** None.
+   - **Risks:** Over-catching errors and masking underlying API issues.
+   - **Acceptance Criteria:** Malformed JSON responses raise a clean `AgentError`; all 17 unit tests pass.
+2. **Task 2: Refine `Retry-After` Edge Case Handling**
+   - **Objective:** Add bounds checking for extreme or negative integer values in `_retry_delay`.
+   - **Dependencies:** Task 1.
+   - **Risks:** Excessive sleep delays.
+   - **Acceptance Criteria:** Invalid header values default safely to exponential backoff; unit tests cover edge cases.
+3. **Task 3: Enhance Secret Redaction Coverage**
+   - **Objective:** Strengthen string sanitization in `agent/gemini.py` against multi-line or varied API key echoes.
+   - **Dependencies:** Task 2.
+   - **Risks:** Performance overhead of regex scanning large error bodies.
+   - **Acceptance Criteria:** All test assertions for secret redaction pass successfully.
 
-### DECISIONS REQUIRING HUMAN APPROVAL
-- Approval to authorize future execution tasks or merge proposed test enhancements into the codebase.
+### Decisions Requiring Human Approval
+- Approval to execute future implementation tasks or code modifications based on this planning cycle.
 
 
 ---
 
 ## Documentation Agent
 
-1) **Current Verified State:**
-- Seven-role sequential orchestration (`agent/run.py`), Gemini API client with retry/fallback (`agent/gemini.py`), and configuration validation (`agent/config.py`) are fully implemented.
-- The 11 unit tests in `tests/test_agent.py` pass successfully, covering input validation, error redaction, run resets, and failure state persistence.
-- GitHub Actions workflow (`.github/workflows/run-agent.yml`) enforces concurrency grouping and commit push retries.
-- Live execution completed successfully using model `gemini-3.5-flash-lite`.
+### 1. Current Verified State
+- **Core Orchestration:** Seven-role sequential pipeline (`agent/run.py`), Gemini API client with retry/fallback (`agent/gemini.py`), and configuration validation (`agent/config.py`) are fully implemented.
+- **Security & Safety:** API keys are strictly redacted from errors, responses >2MB are rejected, and requests are validated for size.
+- **Testing:** Exactly 17 unit test methods exist in `tests/test_agent.py`.
+- **CI/CD:** GitHub Actions workflow (`.github/workflows/run-agent.yml`) automates execution, concurrency locking, and report persistence.
 
-2) **What This Run Verified vs Did Not Verify:**
-- **Verified:** Source implementation correctness, unit-test coverage of core retry/fallback logic, and live cycle generation.
-- **Did Not Verify:** Separate GitHub Actions test execution results, local Git race recovery behavior, or live response size limits exceeding 2 MB.
+### 2. What This Run Verified vs. Did Not Verify
+- **Verified:** Successful live API execution using `gemini-3.5-flash-lite`, state generation under `workspace/`, test method inventory extraction via `ast`, and prompt context assembly.
+- **Did Not Verify:** Separate GitHub Actions test workflow job execution status and end-to-end production deployment.
 
-3) **Three Highest-Value Next Steps:**
-- **Step 1:** Add unit test for the 2 MB response size safety cutoff in `tests/test_agent.py`.
-- **Step 2:** Add unit test for malformed `Retry-After` header handling in `_retry_delay`.
-- **Step 3:** Refactor HTTP transport logic in `agent/gemini.py` into a dedicated adapter.
+### 3. Three Highest-Value Next Steps
+1. **Expand Parser Safeguards:** Handle malformed JSON/unexpected schemas from Gemini gracefully.
+2. **Refine Retry Bounds:** Add strict bounds checking for extreme/negative `Retry-After` header values.
+3. **Enhance Secret Redaction:** Strengthen error body sanitization against varied API key echo formats.
 
-4) **Human Decision Needed:**
-- Approve the proposed test enhancements and future task prioritization.
+### 4. Human Decision Needed
+- Approval to proceed with implementing the prioritized hardening tasks based on this planning cycle report.

@@ -86,6 +86,8 @@ def _generate_with_model(model, payload, key):
                 time.sleep(delay)
                 continue
             detail = exc.read(1500).decode("utf-8", errors="replace")
+            if key:
+                detail = detail.replace(key, "[REDACTED]")
             raise AgentError(
                 f"Gemini API HTTP {exc.code} on {model}: {detail}",
                 retryable=exc.code in RETRYABLE_HTTP_CODES,

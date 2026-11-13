@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Validate workflow YAML syntax
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }; puts "Workflow YAML syntax OK"' .github/workflows/*.yml
       - name: Pull isolated Python runtime

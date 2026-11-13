@@ -1,7 +1,7 @@
 import os
 import re
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", MODEL):
     raise ValueError("Invalid GEMINI_MODEL value.")
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"

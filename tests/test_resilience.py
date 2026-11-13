@@ -117,6 +117,27 @@ class CheckpointTests(unittest.TestCase):
                 saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
                 self.assertIn("Requirements Analyst", saved_state["resumed_agents"])
 
+
+    def test_checkpointed_registry_is_revalidated_before_replay(self):
+        from agent.run import normalize_team_registry
+
+        registry = normalize_team_registry({
+            "custom_agents": [
+                {"name": "Central Supervisor", "mission": "Protected role",
+                 "prompt": "A valid length prompt " * 4},
+                {"name": "Allowed Specialist", "mission": "Review source evidence",
+                 "prompt": "A valid length prompt " * 4},
+            ],
+            "role_overrides": {
+                "Central Supervisor": "Attempted manager override " * 4,
+                "Independent Reviewer": "A valid replacement prompt " * 4,
+            },
+            "disabled_agents": ["Central Supervisor", "Independent Tester"],
+        })
+        self.assertEqual([item["name"] for item in registry["custom_agents"]], ["Allowed Specialist"])
+        self.assertNotIn("Central Supervisor", registry["role_overrides"])
+        self.assertEqual(registry["disabled_agents"], ["Independent Tester"])
+
     def test_clear_removes_checkpoint_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CHECKPOINT.json"

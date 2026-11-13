@@ -108,15 +108,15 @@ def run_cycle(request=None, generator=generate):
     }
     for name, role in STAGES:
         selected = prior_for_stage[name]
-        prior = "\\n\\n".join(
-            f"## {key}\\n{outputs[key][:3500]}" for key in selected if key in outputs
+        prior = "\n\n".join(
+            f"## {key}\n{outputs[key][:3500]}" for key in selected if key in outputs
         )
         prompt = (
             context
-            + "\\n\\nYOUR ROLE FOR THIS STEP: " + name
-            + "\\nReturn only your role's deliverable. Do not write sections for other roles, "
+            + "\n\nYOUR ROLE FOR THIS STEP: " + name
+            + "\nReturn only your role's deliverable. Do not write sections for other roles, "
               "do not copy prior outputs, and obey the word limit in your role instructions."
-            + ("\\n\\nRELEVANT PRIOR FINDINGS (reference only; do not repeat):\\n" + prior if prior else "")
+            + ("\n\nRELEVANT PRIOR FINDINGS (reference only; do not repeat):\n" + prior if prior else "")
         )
         outputs[name] = generator(role, prompt)
 
@@ -124,11 +124,11 @@ def run_cycle(request=None, generator=generate):
     models_used = list(USED_MODELS)
     report = [
         "# گزارش اجرای تیم ایجنت",
-        f"\\nزمان اجرا (UTC): `{now}`",
-        f"\\nشناسه اجرای GitHub: `{__import__('os').getenv('GITHUB_RUN_ID', 'local')}`",
-        f"\\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
-        "\\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
-        f"\\nمدل(های) واقعاً استفاده‌شده: `{', '.join(models_used) or 'ثبت نشده'}`",
+        f"\nزمان اجرا (UTC): `{now}`",
+        f"\nشناسه اجرای GitHub: `{__import__('os').getenv('GITHUB_RUN_ID', 'local')}`",
+        f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
+        "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
+        f"\nمدل(های) واقعاً استفاده‌شده: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
     for name, output in outputs.items():
         report.extend([f"\n\n---\n\n## {name}\n\n{output}"])

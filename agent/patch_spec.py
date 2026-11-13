@@ -6,6 +6,7 @@ from pathlib import PurePosixPath
 MAX_CHANGES = 10
 MAX_DIFF_CHARS = 50_000
 ALLOWED_PREFIXES = ("agent/", "tests/")
+PROTECTED_PATHS = {"agent/config.py", "agent/gemini.py", "agent/run.py", "agent/roles.py", "agent/resilience.py", "agent/patch_spec.py", "agent/patcher.py", "agent/apply_proposal.py"}
 
 
 class PatchSpecError(ValueError):
@@ -24,6 +25,8 @@ def validate_target_path(path):
         raise PatchSpecError("Patch target must be inside agent/ or tests/.")
     if not path.endswith(".py"):
         raise PatchSpecError("Initial patch scope is limited to Python source and test files.")
+    if path in PROTECTED_PATHS:
+        raise PatchSpecError("Patch target is a protected security or orchestration file.")
     if PurePosixPath(path).as_posix() != path:
         raise PatchSpecError("Patch target path is not canonical.")
     return path

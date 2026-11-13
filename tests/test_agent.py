@@ -78,6 +78,19 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertEqual(gemini.ATTEMPTED_MODELS, [])
         self.assertEqual(gemini.ACTIVE_MODEL, gemini.MODEL)
 
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_non_retryable_403_fails_without_fallback(self, mocked_urlopen):
+        mocked_urlopen.side_effect = urllib.error.HTTPError(
+            "https://example.invalid", 403, "forbidden", {}, None
+        )
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            with self.assertRaisesRegex(AgentError, "HTTP 403"):
+                generate("role", "prompt")
+        self.assertEqual(mocked_urlopen.call_count, 1)
+
 
 class FailureStateTests(unittest.TestCase):
     def test_failure_status_is_persisted(self):

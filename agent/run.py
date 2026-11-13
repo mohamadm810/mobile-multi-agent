@@ -513,6 +513,9 @@ def run_cycle(request=None, generator=generate):
             "applied": hr_applied,
             "status": hr_status,
             "registry": registry,
+            "team_fingerprint_after": hashlib.sha256(
+                (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            ).hexdigest(),
         })
     outputs["Agent Recruitment & Governance"] = (
         "### HR decision\n" + str(hr_decision.get("summary", "No summary supplied."))

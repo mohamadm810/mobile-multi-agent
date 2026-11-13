@@ -121,6 +121,18 @@ class FailureStateTests(unittest.TestCase):
             self.assertEqual(saved["status"], "failed")
             self.assertIn("HTTP 503", saved["last_error"])
 
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "private-test-secret"})
+    @patch("agent.run.write_failure_state")
+    @patch("agent.run.run_cycle", side_effect=ValueError("unexpected private-test-secret"))
+    def test_main_persists_unexpected_failure_without_secret(self, _run, write_state):
+        from agent.run import main
+        with self.assertRaises(SystemExit) as caught:
+            main()
+        self.assertEqual(caught.exception.code, 1)
+        saved_error = write_state.call_args.args[0]
+        self.assertIn("ValueError", saved_error)
+        self.assertNotIn("private-test-secret", saved_error)
+
 
 class RepositoryEvidenceTests(unittest.TestCase):
     def test_repository_context_includes_complete_test_file(self):

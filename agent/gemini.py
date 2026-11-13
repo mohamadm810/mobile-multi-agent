@@ -4,7 +4,13 @@ import time
 import urllib.error
 import urllib.request
 
-from .config import API_URL, MAX_OUTPUT_TOKENS, REQUEST_TIMEOUT_SECONDS
+from .config import (
+    FALLBACK_MODELS,
+    MAX_OUTPUT_TOKENS,
+    MODEL,
+    REQUEST_TIMEOUT_SECONDS,
+    API_URL_TEMPLATE,
+)
 
 
 class AgentError(RuntimeError):
@@ -12,7 +18,8 @@ class AgentError(RuntimeError):
 
 
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
-MAX_ATTEMPTS = 4
+MAX_ATTEMPTS_PER_MODEL = 3
+USED_MODELS = []
 
 
 def _extract_text(data):
@@ -39,7 +46,40 @@ def _retry_delay(error, attempt):
             return min(30.0, max(1.0, float(retry_after)))
         except (TypeError, ValueError):
             pass
-    return min(30.0, 2.0 ** attempt)
+    return min(20.0, 2.0 ** attempt)
+
+
+def _generate_with_model(model, payload, key):
+    req = urllib.request.Request(
+        API_URL_TEMPLATE.format(model=model),
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
+        method="POST",
+    )
+    for attempt in range(MAX_ATTEMPTS_PER_MODEL):
+        try:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                raw = response.read(2_000_001)
+                if len(raw) > 2_000_000:
+                    raise AgentError("Gemini response exceeded the 2 MB safety limit.")
+                data = json.loads(raw.decode("utf-8"))
+            return _extract_text(data)
+        except urllib.error.HTTPError as exc:
+            if exc.code in RETRYABLE_HTTP_CODES and attempt < MAX_ATTEMPTS_PER_MODEL - 1:
+                delay = _retry_delay(exc, attempt + 1)
+                exc.close()
+                time.sleep(delay)
+                continue
+            detail = exc.read(1500).decode("utf-8", errors="replace")
+            raise AgentError(f"Gemini API HTTP {exc.code} on {model}: {detail}") from None
+        except AgentError:
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise AgentError(f"Gemini API request failed on {model}: {type(exc).__name__}: {exc}") from None
+    raise AgentError(f"Gemini API request failed on {model} after retries.")
 
 
 def generate(role: str, prompt: str) -> str:
@@ -57,36 +97,16 @@ def generate(role: str, prompt: str) -> str:
             "maxOutputTokens": MAX_OUTPUT_TOKENS,
         },
     }
-    req = urllib.request.Request(
-        API_URL,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": key,
-        },
-        method="POST",
-    )
 
-    for attempt in range(MAX_ATTEMPTS):
+    models = list(dict.fromkeys([MODEL, *FALLBACK_MODELS]))
+    for index, model in enumerate(models):
         try:
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-                raw = response.read(2_000_001)
-                if len(raw) > 2_000_000:
-                    raise AgentError("Gemini response exceeded the 2 MB safety limit.")
-                data = json.loads(raw.decode("utf-8"))
-            return _extract_text(data)
-        except urllib.error.HTTPError as exc:
-            if exc.code in RETRYABLE_HTTP_CODES and attempt < MAX_ATTEMPTS - 1:
-                delay = _retry_delay(exc, attempt + 1)
-                exc.close()
-                time.sleep(delay)
+            result = _generate_with_model(model, payload, key)
+            if model not in USED_MODELS:
+                USED_MODELS.append(model)
+            return result
+        except AgentError as exc:
+            if index < len(models) - 1 and ("HTTP 503" in str(exc) or "HTTP 429" in str(exc)):
                 continue
-            # Do not include request headers or API key in error output.
-            detail = exc.read(1500).decode("utf-8", errors="replace")
-            raise AgentError(f"Gemini API HTTP {exc.code}: {detail}") from None
-        except AgentError:
             raise
-        except (urllib.error.URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise AgentError(f"Gemini API request failed: {type(exc).__name__}: {exc}") from None
-
-    raise AgentError("Gemini API request failed after retry attempts.")
+    raise AgentError("All configured Gemini models failed.")

@@ -211,7 +211,7 @@ class PatchPreparationTests(unittest.TestCase):
                 return real_replace(source, destination)
 
             with patch("agent.patcher.os.replace", side_effect=fail_second_replace):
-                with self.assertRaisesRegex(PatchSpecError, "original files were restored"):
+                with self.assertRaisesRegex(PatchSpecError, "previously replaced files were restored"):
                     apply_patch_spec(root, data, authorization_phrase="APPLY_TO_BRANCH")
 
             self.assertEqual(first.read_text(encoding="utf-8"), "keep\nold-one\n")

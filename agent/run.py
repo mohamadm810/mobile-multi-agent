@@ -35,6 +35,39 @@ def read_request():
     return request
 
 
+
+
+REPOSITORY_EVIDENCE_FILES = [
+    "agent/config.py",
+    "agent/gemini.py",
+    "agent/run.py",
+    "agent/roles.py",
+    ".github/workflows/run-agent.yml",
+    "tests/test_agent.py",
+    "README_FA.md",
+]
+MAX_REPOSITORY_CONTEXT_CHARS = 28000
+
+
+def read_repository_context():
+    """Return bounded source evidence so agents can audit implementation claims."""
+    sections = []
+    remaining = MAX_REPOSITORY_CONTEXT_CHARS
+    for relative_path in REPOSITORY_EVIDENCE_FILES:
+        path = ROOT / relative_path
+        if not path.is_file() or remaining <= 0:
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        header = f"\n\n### REPOSITORY FILE: {relative_path}\n"
+        chunk = header + source[:remaining]
+        sections.append(chunk)
+        remaining -= len(chunk)
+    return "\n".join(sections)
+
+
 def read_state():
     if not STATE_FILE.exists():
         return {"status": "not_started"}
@@ -51,10 +84,16 @@ def run_cycle(request=None, generator=generate):
         raise AgentError("Request is empty or exceeds the configured size limit.")
 
     state = read_state()
+    repository_context = read_repository_context()
     context = (
         "USER REQUEST:\n" + request
         + "\n\nPREVIOUS PROJECT STATE:\n"
         + json.dumps(state, ensure_ascii=False)[:12000]
+        + "\n\nVERIFIABLE REPOSITORY SOURCE EVIDENCE:\n"
+        + repository_context
+        + "\n\nEVIDENCE RULE: Treat the source files above as the authority for current implementation. "
+        "Do not call implemented code proposed, and do not claim unimplemented behavior exists. "
+        "Distinguish source-level implementation, unit-test simulation, and behavior observed in this live run."
     )
     outputs = {}
     for name, role in STAGES:

@@ -44,6 +44,8 @@ def _extract_text(data):
         raise AgentError("Gemini returned a malformed candidate.")
     content = candidate.get("content", {})
     parts = content.get("parts", []) if isinstance(content, dict) else []
+    if not isinstance(parts, list):
+        raise AgentError("Gemini returned malformed content parts.")
     chunks = [
         part.get("text", "")
         for part in parts

@@ -443,6 +443,12 @@ class FailureClassificationTests(unittest.TestCase):
         self.assertEqual(result["category"], "unknown")
         self.assertFalse(result["retryable"])
 
+    def test_missing_independent_provider_secret_is_configuration_failure(self):
+        from agent.run import classify_failure
+        result = classify_failure(RuntimeError("Missing GEMINI_API_KEY or OPENAI_API_KEY provider secret."))
+        self.assertEqual(result["category"], "configuration")
+        self.assertFalse(result["retryable"])
+
 
 if __name__ == "__main__":
     unittest.main()

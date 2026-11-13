@@ -67,7 +67,7 @@ def run_cycle(request=None, generator=generate):
         "# گزارش اجرای تیم ایجنت",
         f"\nزمان اجرا (UTC): `{now}`",
         "\n> این گزارش تحلیل و برنامه‌ریزی مدل است؛ اجرای واقعی کد یا تست پروژه انجام نشده است.",
-        f"\nمدل(های) استفاده‌شده: `{', '.join(USED_MODELS) or __import__('os').getenv('GEMINI_MODEL', 'gemini-3.8-flash')}`",
+        f"\nمدل(های) استفاده‌شده: `{', '.join(USED_MODELS) or __import__('os').getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')}`",
     ]
     for name, output in outputs.items():
         report.extend([f"\n\n---\n\n## {name}\n\n{output}"])

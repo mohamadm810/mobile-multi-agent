@@ -26,8 +26,10 @@ jobs:
       - name: Run seven-agent planning cycle
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.8-flash
-          GEMINI_TIMEOUT_SECONDS: "90"
+          GEMINI_MODEL: gemini-3.5-flash-lite
+          GEMINI_FALLBACK_MODELS: gemini-3.8-flash
+          MAX_OUTPUT_TOKENS: "1800"
+          GEMINI_TIMEOUT_SECONDS: "60"
         run: python -m agent.run
       - name: Commit report and state
         run: |

@@ -36,12 +36,17 @@ class GeminiResponseTests(unittest.TestCase):
         success.__enter__.return_value.read.return_value = json.dumps({
             "candidates": [{"content": {"parts": [{"text": "fallback ok"}]}}]
         }).encode()
-        mocked_urlopen.side_effect = [*errors, success]
+        success_again = MagicMock()
+        success_again.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "second ok"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [*errors, success, success_again]
         with patch("agent.gemini.MODEL", "primary-model"), patch(
-            "agent.gemini.FALLBACK_MODELS", ["fallback-model"]
-        ):
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
             self.assertEqual(generate("role", "prompt"), "fallback ok")
-        self.assertEqual(mocked_urlopen.call_count, 4)
+            self.assertEqual(generate("role", "prompt"), "second ok")
+        self.assertEqual(mocked_urlopen.call_count, 5)
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
 

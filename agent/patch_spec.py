@@ -1,5 +1,6 @@
 """Strict schema and path validation for machine-generated patch proposals."""
 
+import hashlib
 import json
 from pathlib import PurePosixPath
 
@@ -81,3 +82,9 @@ def validate_patch_spec(payload):
             raise PatchSpecError("Combined patch proposal exceeds the 120 KB size limit.")
         normalized.append({"path": path, "unified_diff": diff})
     return {"version": 1, "changes": normalized}
+
+def patch_proposal_fingerprint(payload):
+    """Return a stable SHA-256 fingerprint of a validated proposal."""
+    validated = validate_patch_spec(payload)
+    canonical = json.dumps(validated, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

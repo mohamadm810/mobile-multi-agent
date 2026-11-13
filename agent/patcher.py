@@ -1,6 +1,9 @@
 """Pure-Python, path-restricted patch preparation. No shell or file mutation."""
 
+import os
 import re
+import stat
+import tempfile
 from pathlib import Path, PurePosixPath
 
 from .patch_spec import PatchSpecError, validate_patch_spec
@@ -114,3 +117,32 @@ def prepare_patch_spec(repository_root, proposal):
             original, change["unified_diff"], change["path"]
         )
     return prepared
+
+
+def apply_patch_spec(repository_root, proposal, *, authorization_phrase):
+    """Write a validated proposal only after the explicit one-run approval phrase."""
+    if authorization_phrase != "APPLY_TO_BRANCH":
+        raise PatchSpecError("Explicit APPLY_TO_BRANCH authorization is required.")
+    prepared = prepare_patch_spec(repository_root, proposal)
+    root = Path(repository_root).resolve(strict=True)
+    temporary_files = []
+    try:
+        for relative_path, updated in prepared.items():
+            target = _resolve_existing_target(root, relative_path)
+            mode = stat.S_IMODE(target.stat().st_mode)
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", newline="", dir=target.parent,
+                prefix=f".{target.name}.", suffix=".patch-tmp", delete=False
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary_files.append((temporary, target))
+            temporary.chmod(mode)
+        for temporary, target in temporary_files:
+            os.replace(temporary, target)
+        return list(prepared)
+    finally:
+        for temporary, _ in temporary_files:
+            temporary.unlink(missing_ok=True)

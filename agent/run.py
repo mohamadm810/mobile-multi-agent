@@ -572,6 +572,7 @@ def run_cycle(request=None, generator=generate):
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
         "resumed_agents": resumed_stages,
+        "checkpoint_resumed_from_run_id": checkpoint.resumed_from_run_id,
         "checkpoint_available": False,
         "patch_proposal_status": patch_proposal_status,
         "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_proposal_status["status"] == "validated" else None,
@@ -646,7 +647,7 @@ def write_failure_state(error):
             "status": recovery_status,
             "last_successful_stage": completed[-1] if completed else None,
             "checkpoint_run_id": os.getenv("GITHUB_RUN_ID") or "local",
-            "action_required": "Inspect the error, then rerun workflow_dispatch on main. Only checkpoints matching request, source, team registry, run ID, and integrity checksum will resume."
+            "action_required": "Inspect the error, then rerun workflow_dispatch on main. Only checkpoints matching request, source, team registry, and integrity checksum will resume."
                 if checkpoint_valid else "No valid checkpoint is available; inspect the error before starting a fresh run.",
         },
         "next_step": "Inspect workspace/STATE.json and workspace/REPORT.md. If recovery is paused, rerun workflow_dispatch on main; matching checkpoints resume completed stages automatically.",

@@ -44,9 +44,8 @@ REPOSITORY_EVIDENCE_FILES = [
     "agent/roles.py",
     ".github/workflows/run-agent.yml",
     "tests/test_agent.py",
-    "README_FA.md",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 20000
+MAX_REPOSITORY_CONTEXT_CHARS = 24000
 
 
 def read_repository_context():
@@ -62,7 +61,9 @@ def read_repository_context():
         except OSError:
             continue
         header = f"\n\n### REPOSITORY FILE: {relative_path}\n"
-        chunk = header + source[:remaining]
+        chunk = header + source
+        if len(chunk) > remaining:
+            continue
         sections.append(chunk)
         remaining -= len(chunk)
     return "\n".join(sections)
@@ -111,12 +112,23 @@ def run_cycle(request=None, generator=generate):
         prior = "\n\n".join(
             f"## {key}\n{outputs[key][:3500]}" for key in selected if key in outputs
         )
+        runtime_evidence = ""
+        if name == "Documentation Agent":
+            runtime_evidence = (
+                "\n\nLIVE EXECUTION EVIDENCE: The preceding six role calls in this cycle "
+                "returned successfully from the Gemini API. Successful response model(s): "
+                + (", ".join(USED_MODELS) or "none recorded")
+                + ". Attempted model(s): " + (", ".join(ATTEMPTED_MODELS) or "none recorded")
+                + ". This is a live API run, not a mocked simulation. The separate GitHub Tests "
+                  "workflow result is not available inside this Python process; do not guess it."
+            )
         prompt = (
             context
             + "\n\nYOUR ROLE FOR THIS STEP: " + name
             + "\nReturn only your role's deliverable. Do not write sections for other roles, "
               "do not copy prior outputs, and obey the word limit in your role instructions."
             + ("\n\nRELEVANT PRIOR FINDINGS (reference only; do not repeat):\n" + prior if prior else "")
+            + runtime_evidence
         )
         outputs[name] = generator(role, prompt)
 

@@ -464,6 +464,7 @@ def run_cycle(request=None, generator=generate):
             max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
         )
         checkpoint.record_stage(name, outputs[name])
+        journal.record("stage_succeeded", stage=name, status="completed")
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
             "output_characters": len(outputs[name]),

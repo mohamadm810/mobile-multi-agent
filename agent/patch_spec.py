@@ -62,7 +62,7 @@ def validate_patch_spec(payload):
     changes = payload["changes"]
     if not isinstance(changes, list) or not 1 <= len(changes) <= MAX_CHANGES:
         raise PatchSpecError(f"Patch proposal must contain between 1 and {MAX_CHANGES} changes.")
-    normalized, seen = [], set()
+    normalized, seen, total_chars = [], set(), 0
     for change in changes:
         if not isinstance(change, dict) or set(change) != {"path", "unified_diff"}:
             raise PatchSpecError("Each change must contain only path and unified_diff.")
@@ -71,5 +71,8 @@ def validate_patch_spec(payload):
             raise PatchSpecError("A file may appear only once in a patch proposal.")
         seen.add(path)
         diff = validate_unified_diff_header(path, change["unified_diff"])
+        total_chars += len(diff)
+        if total_chars > 120_000:
+            raise PatchSpecError("Combined patch proposal exceeds the 120 KB size limit.")
         normalized.append({"path": path, "unified_diff": diff})
     return {"version": 1, "changes": normalized}

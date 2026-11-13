@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import MAX_REQUEST_CHARS
-from .gemini import AgentError, generate
+from .gemini import AgentError, USED_MODELS, generate
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, MANAGER, REVIEWER, TESTER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,7 +67,7 @@ def run_cycle(request=None, generator=generate):
         "# گزارش اجرای تیم ایجنت",
         f"\nزمان اجرا (UTC): `{now}`",
         "\n> این گزارش تحلیل و برنامه‌ریزی مدل است؛ اجرای واقعی کد یا تست پروژه انجام نشده است.",
-        f"\nمدل: `{__import__('os').getenv('GEMINI_MODEL', 'gemini-2.5-flash')}`",
+        f"\nمدل(های) استفاده‌شده: `{', '.join(USED_MODELS) or __import__('os').getenv('GEMINI_MODEL', 'gemini-3.8-flash')}`",
     ]
     for name, output in outputs.items():
         report.extend([f"\n\n---\n\n## {name}\n\n{output}"])

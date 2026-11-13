@@ -1,6 +1,7 @@
 import ast
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -182,6 +183,20 @@ def run_cycle(request=None, generator=generate):
         outputs[name] = generator(role, prompt)
 
     now = datetime.now(timezone.utc).isoformat()
+    for role_name, role_output in outputs.items():
+        role_output = re.sub(
+            r"\\b\\d+\\s+unit test methods?\\b",
+            f"{len(unit_test_methods)} unit test methods",
+            role_output,
+            flags=re.IGNORECASE,
+        )
+        role_output = re.sub(
+            r"\\b\\d+\\s+unit tests\\b",
+            f"{len(unit_test_methods)} unit tests",
+            role_output,
+            flags=re.IGNORECASE,
+        )
+        outputs[role_name] = role_output
     models_used = list(USED_MODELS)
     models_attempted = list(ATTEMPTED_MODELS)
     report = [

@@ -56,3 +56,13 @@ jobs:
           done
           echo "Could not publish report after three attempts"
           exit 1
+      - name: Preserve report if publishing fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-agent-report-${{ github.run_id }}
+          path: |
+            workspace/REPORT.md
+            workspace/STATE.json
+          if-no-files-found: warn
+          retention-days: 14

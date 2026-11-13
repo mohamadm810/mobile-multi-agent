@@ -1,3 +1,4 @@
+import ast
 import json
 import sys
 from datetime import datetime, timezone
@@ -69,6 +70,20 @@ def read_repository_context():
     return "\n".join(sections)
 
 
+def get_unit_test_inventory():
+    """Return exact unittest method names found in the checked-in test source."""
+    test_file = ROOT / "tests" / "test_agent.py"
+    try:
+        tree = ast.parse(test_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeError):
+        return []
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+            names.append(node.name)
+    return sorted(set(names))
+
+
 def read_state():
     if not STATE_FILE.exists():
         return {"status": "not_started"}
@@ -119,8 +134,9 @@ def run_cycle(request=None, generator=generate):
                 "returned successfully from the Gemini API. Successful response model(s): "
                 + (", ".join(USED_MODELS) or "none recorded")
                 + ". Attempted model(s): " + (", ".join(ATTEMPTED_MODELS) or "none recorded")
-                + ". This is a live API run, not a mocked simulation. The separate GitHub Tests "
-                  "workflow result is not available inside this Python process; do not guess it."
+                + ". This is a live API run, not a mocked simulation. Source contains "
+                + str(len(unit_test_methods)) + " unittest methods: " + ", ".join(unit_test_methods)
+                + ". The separate GitHub Tests workflow result is not available inside this Python process; do not guess it."
             )
         prompt = (
             context
@@ -135,11 +151,13 @@ def run_cycle(request=None, generator=generate):
     now = datetime.now(timezone.utc).isoformat()
     models_used = list(USED_MODELS)
     models_attempted = list(ATTEMPTED_MODELS)
+    unit_test_methods = get_unit_test_inventory()
     report = [
         "# گزارش اجرای تیم ایجنت",
         f"\nزمان اجرا (UTC): `{now}`",
         f"\nشناسه اجرای GitHub: `{__import__('os').getenv('GITHUB_RUN_ID', 'local')}`",
         f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
+        f"\nتعداد متدهای تست موجود در سورس: `{len(unit_test_methods)}`",
         "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
         f"\nمدل(های) تلاش‌شده: `{', '.join(models_attempted) or 'ثبت نشده'}`",
         f"\nمدل(های) پاسخ‌گوی موفق: `{', '.join(models_used) or 'ثبت نشده'}`",
@@ -157,6 +175,7 @@ def run_cycle(request=None, generator=generate):
         "completed_agents": list(outputs.keys()),
         "models_used": models_used,
         "models_attempted": models_attempted,
+        "unit_test_methods": unit_test_methods,
         "github_run_id": __import__("os").getenv("GITHUB_RUN_ID"),
         "github_sha": __import__("os").getenv("GITHUB_SHA"),
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",

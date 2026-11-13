@@ -162,6 +162,31 @@ class RepositoryEvidenceTests(unittest.TestCase):
         self.assertIn("if __name__ == \"__main__\":", context)
 
 
+class OrchestrationTests(unittest.TestCase):
+    def test_documentation_agent_receives_deterministic_run_evidence(self):
+        from agent.run import run_cycle
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompts = []
+            with patch("agent.run.WORKSPACE", root), patch(
+                "agent.run.STATE_FILE", root / "STATE.json"
+            ), patch("agent.run.REPORT_FILE", root / "REPORT.md"), patch(
+                "agent.run.read_state", return_value={"status": "not_started"}
+            ), patch("agent.run.read_repository_context", return_value="source evidence"):
+                outputs = run_cycle(
+                    "test request",
+                    generator=lambda role, prompt: prompts.append((role, prompt)) or "ok",
+                )
+            self.assertEqual(len(outputs), 7)
+            docs_prompt = prompts[-1][1]
+            self.assertIn("LIVE EXECUTION EVIDENCE", docs_prompt)
+            self.assertIn("Source contains", docs_prompt)
+            self.assertIn("test_documentation_agent_receives_deterministic_run_evidence", docs_prompt)
+            self.assertTrue((root / "REPORT.md").is_file())
+            saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(saved_state["completed_agents"]), 7)
+
+
 class RequestValidationTests(unittest.TestCase):
     def test_rejects_empty_request(self):
         from agent.run import run_cycle

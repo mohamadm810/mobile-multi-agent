@@ -7,7 +7,7 @@ from pathlib import Path
 import urllib.error
 from unittest.mock import patch, MagicMock
 
-from agent.gemini import AgentError, _extract_text, generate, reset_run_tracking
+from agent.gemini import AgentError, _extract_text, _retry_delay, generate, reset_run_tracking
 
 
 class GeminiResponseTests(unittest.TestCase):
@@ -106,6 +106,26 @@ class GeminiResponseTests(unittest.TestCase):
                 generate("role", "prompt")
         self.assertNotIn("test-key", str(caught.exception))
         self.assertIn("[REDACTED]", str(caught.exception))
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_response_over_2mb_is_rejected(self, mocked_urlopen):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"x" * 2_000_001
+        mocked_urlopen.return_value = response
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", []):
+            with self.assertRaisesRegex(AgentError, "2 MB safety limit"):
+                generate("role", "prompt")
+        self.assertEqual(mocked_urlopen.call_count, 1)
+
+    def test_invalid_retry_after_uses_exponential_default(self):
+        error = urllib.error.HTTPError(
+            "https://example.invalid", 503, "busy",
+            {"Retry-After": "not-a-number"}, None
+        )
+        self.assertEqual(_retry_delay(error, 2), 4.0)
 
 
 class FailureStateTests(unittest.TestCase):

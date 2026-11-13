@@ -450,7 +450,7 @@ class AgentGovernanceTests(unittest.TestCase):
             "actions": [{"action": "retire", "name": "Central Supervisor",
                          "reason": "The manager seems inefficient."}],
         })
-        with self.assertRaisesRegex(ValueError, "protected core roles"):
+        with self.assertRaisesRegex(ValueError, "Central Supervisor"):
             apply_hr_decisions(payload, registry)
 
     def test_hr_rejects_too_many_staffing_actions(self):

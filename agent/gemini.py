@@ -3,6 +3,8 @@ import json
 import os
 import random
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import urllib.error
 import urllib.request
 
@@ -65,7 +67,13 @@ def _retry_delay(error, attempt):
         try:
             delay = float(retry_after)
         except (TypeError, ValueError):
-            delay = None
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                delay = None
         if delay is not None and delay >= 0:
             return delay if delay <= 30.0 else None
     base = min(20.0, 2.0 ** max(0, attempt - 1))

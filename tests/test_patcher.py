@@ -103,8 +103,8 @@ class PatchPreparationTests(unittest.TestCase):
             target = root / "agent" / "example.py"
             target.write_text("keep\nold\n", encoding="utf-8")
             prepared = prepare_patch_spec(root, proposal())
-            self.assertEqual(prepared, {"agent/example.py": "keep\\nnew\\n"})
-            self.assertEqual(target.read_text(encoding="utf-8"), "keep\nnew\n")
+            self.assertEqual(prepared, {"agent/example.py": "keep\nnew\n"})
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep\nold\n")
 
     def test_rejects_missing_target_file(self):
         with tempfile.TemporaryDirectory() as directory:

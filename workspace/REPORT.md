@@ -1,10 +1,10 @@
 # گزارش اجرای تیم ایجنت
 
-زمان اجرا (UTC): `2026-11-13T11:29:45.916316+00:00`
+زمان اجرا (UTC): `2026-11-13T11:54:43.258300+00:00`
 
-شناسه اجرای GitHub: `43417449880`
+شناسه اجرای GitHub: `43420749626`
 
-نسخه سورس اجراشده: `97db434b6f00fab6b9278fa9b398f5064a5b52f0`
+نسخه سورس اجراشده: `bd56e691a98dae0c20bffdbfd9619692466b8bd2`
 
 تعداد متدهای تست موجود در سورس: `43`
 
@@ -20,118 +20,164 @@
 ## Requirements Analyst
 
 ### Functional Requirements
-1. **API Interaction & Fallbacks**: The system must invoke Gemini APIs using configured models, automatically retry transient failures and stream interruptions (`http.client.HTTPException`), and transition through primary and fallback models (`agent/gemini.py`).
-2. **Request Processing & Validation**: The system must validate positive integer configurations (`MAX_OUTPUT_TOKENS`, `GEMINI_TIMEOUT_SECONDS`, `MAX_REQUEST_CHARS`), reject empty or oversized requests, and correctly extract text after HTML comments (`agent/config.py`, `agent/run.py`).
-3. **Multi-Agent Orchestration & Governance**: The system must execute eight core roles sequentially, support bounded custom agent staffing via the HR role (`TEAM.json`), and protect core supervisor/HR roles.
+1. **Controlled Code Execution**: The multi-agent system must be capable of proposing code modifications, creating separate working branches, applying patches exclusively within the current repository, executing automated tests, performing independent reviews, and outputting structured diffs.
+2. **Explicit Authorization Gates**: Every execution action, commit, merge, release, or deployment requires explicit, proportional human approval. Approval for one task must never be treated as persistent or implicit permission for subsequent tasks.
+3. **Mobile Workflow Integration**: The system workflows must support triggering requests, reviewing diffs, validating test results, and approving changes directly via GitHub Mobile interfaces.
 
 ### Non-Functional Requirements
-1. **Security & Redaction**: API keys must be strictly redacted from error messages and logs (`agent/gemini.py`).
-2. **Atomic Persistence**: State, reports, and team configurations must be persisted using atomic file replacements to prevent partial writes (`agent/run.py`).
-3. **Concurrency Control**: GitHub Actions concurrency and workflow settings must prevent overlapping execution corruption (`.github/workflows/run-agent.yml`).
+1. **Security & Sandbox Isolation**: Tool usage and file paths must be strictly restricted. Shell execution of arbitrary commands must be blocked, repository content must be protected against prompt injection attacks, and API secrets must be redacted from logs.
+2. **Reversibility & Auditability**: All code changes must be isolated in secure branches/commits with full support for rollback. Comprehensive logs and decision histories must be preserved.
+3. **Multi-Agent Decision Quality**: The agent team must maintain role independence, prevent false consensus, evaluate concrete evidence, resolve conflicts, detect uncertainty, and avoid redundant output generation.
 
 ### Constraints
-1. Analysis and execution are bound to the current repository; no external shell execution or unauthorized deployments.
-2. Staffing actions are restricted to a maximum of 2 actions per run and 5 active custom agents.
-3. Output length must strictly adhere to role-specific word limits (maximum 300 words for this role).
+- Version 1 core source code and its two stabilization branches (`release/v1.0.0`, `backup/pre-phase2-v1.0.0`) must remain strictly unmodified.
+- In this analysis cycle, no executable files or live features may be modified or activated.
+- Central Supervisor and Human Resources Director roles remain protected and immutable without explicit human intervention.
 
 ### Acceptance Criteria
-1. All 43 unit tests present in `tests/test_agent.py` pass successfully.
-2. Configuration parser rejects non-positive or malformed integer environment variables with a clear error.
-3. Concurrent atomic writes to JSON files leave no partial or temporary files.
+1. Complete feasibility analysis and architecture design report for Phase 2 without altering existing code.
+2. Defined permission matrix separating automated, approval-required, and forbidden actions.
+3. Prioritized gap analysis with explicit file/function evidence.
 
 ### Unresolved Questions
-None; current requirements and constraints are fully defined by the repository evidence.
+1. What specific GitHub API or webhook mechanisms will be utilized for surfacing mobile approval gates through GitHub Mobile?
+2. Which sandboxed execution environment will be adopted for running patches and test suites safely within GitHub Actions without exposing arbitrary shell access?
 
 
 ---
 
 ## Software Architect
 
-### CURRENT IMPLEMENTATION
-1. **Gemini Client (`agent/gemini.py`)**: Implements `_generate_with_model` with `urllib.request`, retry logic for HTTP status codes (`429, 500, 502, 503, 504`), transport error handling, timeout controls (`REQUEST_TIMEOUT_SECONDS`), API key redaction, and model fallback iteration (`MODEL`, `FALLBACK_MODELS`). Explicitly catches `http.client.HTTPException` alongside network/transport errors.
-2. **Configuration (`agent/config.py`)**: Uses `_positive_int_env` to validate that `MAX_OUTPUT_TOKENS`, `GEMINI_TIMEOUT_SECONDS`, and `MAX_REQUEST_CHARS` are positive integers.
-3. **Request & State Management (`agent/run.py`)**: `read_request()` strips HTML comments (`<!--.*?-->`) while preserving subsequent real text and validating length limits. `atomic_write_text()` implements atomic file replacement via `tempfile.NamedTemporaryFile` and `os.replace`.
-4. **Team Governance & HR (`agent/run.py`)**: Implements an eighth role (`Agent Recruitment & Governance`) with strict JSON schema parsing and bounded staffing limits (`MAX_CUSTOM_AGENTS = 5`, `MAX_STAFFING_ACTIONS = 2`), protecting the Central Supervisor and HR roles.
-5. **Testing (`tests/test_agent.py`)**: Exactly 43 deterministic unittest methods verify configuration validation, atomic writes, fallback chains, HTTP error redaction, and HR governance workflows.
+### 1. Current Verified Implementation & Limitations
+- **Current Implementation**: The system (`agent/run.py`, `agent/gemini.py`) executes an 8-role planning and governance cycle via Gemini API, reads/writes atomic JSON states, and commits markdown reports to GitHub (`.github/workflows/run-agent.yml`).
+- **Limitations**: 
+  - No file-patching execution capability exists in `agent/run.py`.
+  - No sandboxed code runner or patch application tool exists in the codebase.
+  - No authorization gate mechanism exists for code modifications or pull requests.
 
-### PROPOSED
-No architectural changes or new modules are proposed. All required mechanisms for resilience, security, state atomicity, and test coverage are fully implemented and evidenced in the repository source files.
+### 2. Prioritized Gaps
+1. **Lack of Code Patching Engine**: `agent/run.py` only outputs text plans to `workspace/REPORT.md`. *Effect*: System cannot apply or test code modifications.
+2. **Absence of Sandbox Execution Tool**: No safe test-running utility exists to execute `pytest` on applied patches without risking arbitrary shell injection. *Effect*: Uncontrolled command execution risk.
+3. **Missing Human-in-the-Loop (HITL) Authorization Gates**: GitHub Actions workflow (`.github/workflows/run-agent.yml`) automatically pushes commits to `main` without requiring manual review gates. *Effect*: Violates zero-trust deployment rules.
+4. **Prompt Injection Vulnerability in Repository Context**: `read_request()` and `read_repository_context()` ingest workspace files without strict semantic sanitization against malicious instructions embedded in file payloads. *Effect*: Potential hijacking of agent instructions.
+
+### 3. Proposed Phase 2 Architecture (Low-Risk, Staged)
+- **Stage 1 (Proposal & Diff Generation)**: Extend Developer role output specification to generate structured JSON patch blocks (`{"path": "...", "patch": "..."}`) rather than free-form prose.
+- **Stage 2 (Isolated Branching & Dry Run)**: Implement a restricted Python patching utility (`agent/patcher.py`) that applies unified diffs strictly within allowed repository subpaths (`agent/`, `tests/`), running `pytest` in a restricted subprocess without shell interpolation (`shell=False`).
+- **Stage 3 (Authorization Gate)**: Update GitHub Actions workflow to pause execution or require a GitHub Pull Request review / GitHub Mobile comment approval before merge/commit.
+
+### 4. Permission Matrix
+| Action | Automated | Requires Approval | Forbidden |
+| :--- | :--- | :--- | :--- |
+| Planning & Report Generation | Yes (`run-agent.yml`) | No | No |
+| Custom Agent Hiring/Retirement (HR) | Yes (bounded) | No | Changing Central Supervisor / HR |
+| Generating Code Patches & Diffs | Yes (Dry-run) | No | Direct push without PR |
+| Applying Patch to Working Branch | No | Yes (Explicit human sign-off) | No |
+| Running Automated Tests (`pytest`) | Yes (on proposed branch) | No | Arbitrary shell commands |
+| Commit, Merge, Release, Deploy | No | Yes (GitHub PR review / Mobile) | Automated push to `release/*` |
+
+### 5. Acceptance Criteria & Tests
+- **AC1**: `agent/patcher.py` successfully applies valid unified diffs to target files within `agent/` or `tests/` while rejecting path traversal attempts (`..` or absolute paths).
+- **AC2**: Unit tests verify that arbitrary shell execution is blocked and only restricted `pytest` commands execute.
+- **AC3**: Authorization gate prevents workflow continuation without explicit human PR approval in GitHub Mobile.
+
+### 6. Decisions Required from User
+1. Approve the restriction of patch application strictly to `agent/` and `tests/` directories.
+2. Confirm whether GitHub Pull Request review comments or workflow dispatch inputs will serve as the primary mobile approval gate.
 
 
 ---
 
 ## Developer Planner
 
-### Implementation Tasks
+### Implementation Tasks (Phase 2 Design)
 
-No
- new implementation tasks are required. All features, resilience mechanisms, security redactions, atomic file persistence, configuration validations, and HR governance workflows requested by the user and defined in the requirements are fully implemented, verified, and backed by the exact inventory of 43 passing unit tests in `tests/test_agent.py`.
+#### Task 1: Structured Patch Generator Schema
+- **Objective**: Extend Developer and Architect role prompts to output machine-readable, bounded JSON patch blocks (`path`, `unified_diff`) instead of raw text descriptions.
+- **Files to Change**: PROPOSED `agent/patch_spec.py`, `agent/roles.py`.
+- **Acceptance Criteria**: Role outputs strictly validate against a JSON schema limiting file modifications to `agent/` and `tests/` directories.
+- **Dependencies**: None.
+
+#### Task 2: Sandboxed Patcher and Test Runner Utility
+- **Objective**: Implement a secure patching and test execution engine that applies unified diffs with path traversal checks and runs `pytest` via `subprocess.run` with `shell=False`.
+- **Files to Change**: PROPOSED `agent/patcher.py`, PROPOSED `tests/test_patcher.py`.
+- **Acceptance Criteria**: Rejects absolute paths and `..` traversal; successfully applies valid patches and executes `pytest` without shell expansion.
+- **Dependencies**: Task 1.
+
+#### Task 3: GitHub Actions Authorization Gate & Pull Request Workflow
+- **Objective**: Restructure `.github/workflows/run-agent.yml` so that code patches are committed to an isolated working branch (`agent-work/*`) and opened as a Pull Request requiring human review rather than direct pushing to `main`.
+- **Files to Change**: `.github/workflows/run-agent.yml`.
+- **Acceptance Criteria**: Workflow creates a PR, halts execution for human sign-off via GitHub Mobile/Web, and prevents automated merge/deploy without explicit approval.
+- **Dependencies**: Task 2.
 
 
 ---
 
 ## Independent Tester
 
-### Existing Test Coverage
-- **Core Unit Tests**: Exactly 43 unit test methods are implemented in `tests/test_agent.py`, covering Gemini API interactions, retry/fallback sequences, configuration validations, request filtering, and atomic persistence.
-- **HR Governance Tests**: Covers hiring, retiring, revising, restoring, and validation limits for custom and core agents (`AgentGovernanceTests`).
-
-### Proposed Tests
-- None required; existing test inventory completely covers implementation scope.
+### Existing Test Coverage vs. Proposed Tests
+- **Existing Coverage**: Exactly 43 deterministic unit tests in `tests/test_agent.py` covering Gemini API transport retries, HTTP error redaction, fallback mechanics, atomic JSON persistence, and HR governance role limits. No code execution, patching, or branch isolation tests exist in the codebase.
+- **Proposed Tests**: 
+  1. `tests/test_patcher.py`: Verify strict path traversal blocking (rejecting absolute paths and `..`), atomic patch application, and sandboxed `pytest` execution (`shell=False`).
+  2. `tests/test_authorization.py`: Test GitHub Actions gate logic, validating that PR creation halts workflow progression without manual review labels.
 
 ### Untested Failure Paths & Edge Cases
-- **Network Timeout on Fallback Mid-Stream**: Lack of granular verification for socket timeout occurring precisely during intermediate fallback stream read chunks.
-- **Concurrent File Locking Contention**: Extreme disk I/O starvation during multi-threaded `atomic_write_text()` invocations on restrictive file systems.
+1. **Malicious Unified Diffs**: Patches containing directory traversal tokens (`../`) or modifying files outside allowed directories (`agent/`, `tests/`).
+2. **Prompt Injection via Repository Content**: Malicious instructions embedded in repository files overriding system safety constraints during patch generation.
+3. **Merge Conflict / Concurrency Stale State**: Concurrent PR updates causing rebase failures or incorrect patch applications on diverging branches.
 
 ### Security Risks
-- **API Key Leakage via Detailed Traces**: Low risk; current implementation actively strips keys via string replacement (`detail.replace(key, "[REDACTED]")`), but upstream custom wrapper exceptions must maintain identical scrubbing.
+1. **Arbitrary Shell Execution**: Uncontrolled execution of patch commands or test scripts via shell expansion (`shell=True`).
+2. **Secret Exfiltration**: Generated diffs or error logs exposing repository secrets (`GEMINI_API_KEY`) through failed test outputs.
 
 ### Measurable Expected Results
-- Execution of `pytest` successfully passes all 43 tests.
-- Zero partial JSON files or leftover `.tmp` artifacts during concurrent writes.
+1. 100% of invalid or out-of-bounds patch paths rejected with explicit `AgentError` exceptions.
+2. Zero direct pushes to `main` when code modifications are generated; all changes routed strictly through `agent-work/*` pull requests requiring GitHub Mobile human approval.
 
 
 ---
 
 ## Independent Reviewer
 
-### BLOCKING ISSUES
-- None.
+BLOCKING ISSUES:
+- None identified in the proposed feasibility and design analysis; existing version 1 code and stabilization branches (`release/v1.0.0`, `backup/pre-phase2-v1.0.0`) remain strictly unmodified.
 
-### NON-BLOCKING ISSUES
-- **Test Inventory Discrepancy in Older Prose**: Older documentation or cached reports might reference older test counts, though current source code and execution context strictly verify exactly 43 unit test methods in `tests/test_agent.py`.
+NON-BLOCKING ISSUES:
+- The architectural transition from planning-only to controlled patch execution requires precise definition of how LLM-generated unified diffs will be syntactically validated before ingestion by `agent/patcher.py`.
 
-### VERIFIED CLAIMS
-- `agent/config.py` correctly validates positive integers for `MAX_OUTPUT_TOKENS`, `GEMINI_TIMEOUT_SECONDS`, and `MAX_REQUEST_CHARS`.
-- `agent/gemini.py` properly retries stream connection and transport exceptions (including `http.client.HTTPException`) and redacts API keys from error details.
-- `agent/run.py` ensures atomic persistence via temporary file replacement and correctly processes requests by filtering out HTML-comment-only templates while preserving valid trailing text.
-- Exactly 43 deterministic unit test methods are present in `tests/test_agent.py` and pass successfully.
+VERIFIED CLAIMS:
+- Version 1 code and stabilization branches are untouched.
+- The 43 deterministic unit tests in `tests/test_agent.py` are fully documented.
+- The proposed Phase 2 design correctly establishes strict isolation boundaries (`agent/`, `tests/`), sandboxed execution (`shell=False`), and GitHub Pull Request / GitHub Mobile human authorization gates.
 
-### CORRECTIONS REQUIRED
-- None.
+CORRECTIONS REQUIRED:
+- Ensure that any future Phase 2 implementation of `agent/patcher.py` enforces strict lexical validation of unified diff headers (preventing target path tampering outside `agent/` and `tests/`) prior to patch application.
 
 
 ---
 
 ## Central Supervisor
 
-### Project Goal
-Evaluate repository stability, security, and correctness, ensuring robust multi-agent execution, error retry/fallback, atomic state persistence, and bounded HR governance.
+### PROJECT GOAL
+Assess feasibility and design Phase 2 for safe, controlled, and human-authorized code modification and testing within this repository, maintaining zero modification to Version 1 stabilization branches (`release/v1.0.0`, `backup/pre-phase2-v1.0.0`).
 
-### Verified Status
-- **Source Implementation**: `agent/config.py`, `agent/gemini.py`, and `agent/run.py` implement positive integer validation, HTTP/transport retry handling (including `http.client.HTTPException`), API key redaction, HTML comment request filtering, and atomic file replacement (`tempfile` + `os.replace`).
-- **Test Coverage**: Exactly 43 deterministic unit test methods are present in `tests/test_agent.py` and pass successfully.
-- **Workflows & Governance**: GitHub Actions workflows utilize updated runner actions (`actions/checkout@v7`, `actions/setup-python@v7.1.0`), and the HR governance role correctly manages up to 5 custom agents and 2 actions per cycle while protecting core supervisor/HR roles.
+### VERIFIED STATUS
+- Version 1 core implementation and the 43 deterministic unit tests in `tests/test_agent.py` are fully intact and unmodified.
+- Current capabilities are strictly limited to planning, reporting, and HR governance via Gemini API; no code patching or automated execution tooling exists in the repository.
 
-### Top Risks
-1. **Upstream API Outages**: Prolonged downstream Gemini API unavailability exhausting primary and all configured fallback models.
-2. **Concurrency Race Conditions**: Potential file contention if external processes modify repository state concurrently outside GitHub Actions control.
+### TOP RISKS
+1. **Unauthorized Code Execution / Path Traversal**: Unchecked LLM-generated diffs modifying files outside `agent/` or `tests/`.
+2. **Arbitrary Shell Injection**: Vulnerabilities arising from subprocess execution with shell expansion enabled.
+3. **Implicit Authorization Drift**: Automated PR creation or merging without explicit GitHub Mobile/Web human sign-off.
 
-### Prioritized Plan
-No further implementation tasks are necessary. All specified requirements, resilience features, and tests are fully completed and verified in the repository.
+### PRIORITIZED PLAN
+1. **Define Structured Patch Specification**: Specify JSON-bounded unified diff outputs for Developer/Architect roles targeting exclusively `agent/` and `tests/`.
+2. **Implement Sandboxed Patcher**: Build `agent/patcher.py` with strict path traversal checks (`shell=False`) and automated `pytest` validation.
+3. **Configure GitHub PR & Mobile Gates**: Restructure `.github/workflows/run-agent.yml` to route patches through isolated branches (`agent-work/*`) and require manual review.
 
-### Decisions Requiring Human Approval
-- **Release Sign-Off**: Approval to close version 1 based on verified test execution and completed documentation review.
+### DECISIONS REQUIRING HUMAN APPROVAL
+1. **Scope Restriction**: Approve restricting all automated code patching strictly to `agent/` and `tests/` directories.
+2. **Authorization Workflow**: Approve using GitHub Pull Request reviews and GitHub Mobile approval comments as the mandatory gate before any code merge.
 
 
 ---
@@ -139,23 +185,23 @@ No further implementation tasks are necessary. All specified requirements, resil
 ## Documentation Agent
 
 ### Current Verified State
-- **Configuration & Validation**: `agent/config.py` enforces positive integer validation for `MAX_OUTPUT_TOKENS`, `GEMINI_TIMEOUT_SECONDS`, and `MAX_REQUEST_CHARS`.
-- **Resilient API Client**: `agent/gemini.py` implements retry mechanisms for HTTP and transport errors (including `http.client.HTTPException`), model fallback chains, and strict API key redaction.
-- **Atomic State & Request Parsing**: `agent/run.py` ensures atomic JSON replacement via temporary files and filters HTML-comment-only request templates while preserving trailing text.
-- **Team Governance**: HR role successfully manages custom agents and role overrides within bounded limits (`MAX_CUSTOM_AGENTS = 5`, `MAX_STAFFING_ACTIONS = 2`) while protecting core management roles.
-- **Test Suite**: Exactly 43 deterministic unit test methods are present in `tests/test_agent.py`.
+- Version 1 is fully stabilized and preserved on `release/v1.0.0` and `backup/pre-phase2-v1.0.0`.
+- The repository contains exactly 43 deterministic unit test methods in `tests/test_agent.py`.
+- The system currently operates solely as an 8-role planning, reporting, and HR governance engine.
+- No code-patching execution tooling or sandboxed test runner exists in the current source.
+- GitHub Actions workflow automatically commits planning reports without code modification capabilities.
 
-### Verified vs. Not Verified
-- **Verified**: Source implementation of all core modules, configuration validations, fallback behaviors, atomic file persistence, API error redaction, and execution of the 43 unit tests within the test suite.
-- **Not Verified**: Live GitHub Actions workflow test execution results (as workflow logs are external to this Python execution context).
+### What This Run Verified vs. Did Not Verify
+- **Verified**: The feasibility and design requirements for Phase 2, role independence, governance constraints, and exact test inventory (43 methods).
+- **Did Not Verify**: Actual code patching execution, sandboxed subprocess testing, or live GitHub Mobile pull request gate interactions (as Phase 2 execution tools are intentionally unimplemented).
 
 ### Three Highest-Value Next Steps
-1. **Review and Sign-Off**: Human review and approval of the generated `workspace/REPORT.md` and `workspace/STATE.json` deliverables.
-2. **Workflow Validation**: Monitor the external GitHub Actions `Tests` workflow execution to confirm runner success.
-3. **Version 1 Closure**: Formally tag and close version 1 of the multi-agent planning and governance repository.
+1. **Design Structured Patch Specification**: Define JSON-bounded unified diff outputs targeting exclusively `agent/` and `tests/`.
+2. **Implement Sandboxed Patcher**: Build `agent/patcher.py` with strict path traversal validation and `shell=False` execution.
+3. **Configure GitHub PR & Mobile Gates**: Update workflow configuration to route proposed changes through isolated branches requiring manual review.
 
 ### Human Decision Needed
-- **Release Approval**: Approve version 1 closeout and authorize the final release state.
+Approve restricting all automated code patching strictly to `agent/` and `tests/` directories via GitHub Pull Request review and GitHub Mobile comments before merge.
 
 
 ---
@@ -163,10 +209,10 @@ No further implementation tasks are necessary. All specified requirements, resil
 ## Agent Recruitment & Governance
 
 ### HR decision
-All required features, resilience mechanisms, security redactions, atomic file persistence, configuration validations, and HR governance workflows are fully implemented, verified, and backed by the exact inventory of 43 passing unit tests in tests/test_agent.py. No staffing changes or custom agents are needed for this run.
+Phase 2 feasibility and design successfully analyzed. All roles confirmed that version 1 code and stabilization branches remain untouched. No structural agent changes or custom hires are required for this analysis cycle.
 
 ### Manager review
-none
+Approve restricting all automated code patching strictly to agent/ and tests/ directories via GitHub Pull Request review and GitHub Mobile comments before merge.
 
 ### Applied staffing actions
 - No staffing changes.

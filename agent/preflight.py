@@ -124,7 +124,7 @@ def main():
         ) as handle:
             temporary_path = Path(handle.name)
             json.dump(result, handle, ensure_ascii=False, indent=2)
-            handle.write("\\n")
+            handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, report_path)

@@ -120,29 +120,84 @@ def prepare_patch_spec(repository_root, proposal):
 
 
 def apply_patch_spec(repository_root, proposal, *, authorization_phrase):
-    """Write a validated proposal only after the explicit one-run approval phrase."""
+    """Apply a bounded multi-file patch with staged writes and best-effort rollback."""
     if authorization_phrase != "APPLY_TO_BRANCH":
         raise PatchSpecError("Explicit APPLY_TO_BRANCH authorization is required.")
     prepared = prepare_patch_spec(repository_root, proposal)
     root = Path(repository_root).resolve(strict=True)
-    temporary_files = []
+    staged = []
+    committed = []
     try:
+        # Stage every replacement before touching any original file.
         for relative_path, updated in prepared.items():
             target = _resolve_existing_target(root, relative_path)
-            mode = stat.S_IMODE(target.stat().st_mode)
+            original_bytes = target.read_bytes()
+            original_mode = stat.S_IMODE(target.stat().st_mode)
+            try:
+                current_text = original_bytes.decode("utf-8")
+            except UnicodeError:
+                raise PatchSpecError("Patch target changed to non-UTF-8 content during preparation.") from None
+            if apply_unified_diff(current_text, next(
+                item["unified_diff"] for item in validate_patch_spec(proposal)["changes"]
+                if item["path"] == relative_path
+            ), relative_path) != updated:
+                raise PatchSpecError("Patch preparation changed during transaction.")
             with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", newline="", dir=target.parent,
-                prefix=f".{target.name}.", suffix=".patch-tmp", delete=False
+                mode="wb", dir=target.parent, prefix=f".{target.name}.",
+                suffix=".patch-tmp", delete=False
             ) as handle:
                 temporary = Path(handle.name)
-                handle.write(updated)
+                handle.write(updated.encode("utf-8"))
                 handle.flush()
                 os.fsync(handle.fileno())
-            temporary_files.append((temporary, target))
-            temporary.chmod(mode)
-        for temporary, target in temporary_files:
-            os.replace(temporary, target)
-        return list(prepared)
+            temporary.chmod(original_mode)
+            staged.append({
+                "path": relative_path, "target": target, "temporary": temporary,
+                "original": original_bytes, "mode": original_mode,
+            })
+
+        # Detect concurrent edits or path substitution immediately before commit.
+        for item in staged:
+            target = _resolve_existing_target(root, item["path"])
+            if target != item["target"] or target.read_bytes() != item["original"]:
+                raise PatchSpecError("Target changed after validation; no patch was committed.")
+
+        for item in staged:
+            os.replace(item["temporary"], item["target"])
+            committed.append(item)
+
+        return [item["path"] for item in staged]
+    except Exception as exc:
+        rollback_errors = []
+        for item in reversed(committed):
+            restore_path = None
+            try:
+                target = _resolve_existing_target(root, item["path"])
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=target.parent, prefix=f".{target.name}.",
+                    suffix=".rollback-tmp", delete=False
+                ) as handle:
+                    restore_path = Path(handle.name)
+                    handle.write(item["original"])
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                restore_path.chmod(item["mode"])
+                os.replace(restore_path, target)
+                restore_path = None
+            except Exception as rollback_exc:
+                rollback_errors.append(type(rollback_exc).__name__)
+            finally:
+                if restore_path is not None:
+                    restore_path.unlink(missing_ok=True)
+        if rollback_errors:
+            raise PatchSpecError(
+                "Patch transaction failed and rollback was incomplete; inspect repository state immediately."
+            ) from None
+        if isinstance(exc, PatchSpecError):
+            raise
+        raise PatchSpecError(
+            f"Patch transaction failed; previously replaced files were restored ({type(exc).__name__})."
+        ) from None
     finally:
-        for temporary, _ in temporary_files:
-            temporary.unlink(missing_ok=True)
+        for item in staged:
+            item["temporary"].unlink(missing_ok=True)

@@ -129,7 +129,8 @@ def run_cycle(request=None, generator=generate):
         f"\nشناسه اجرای GitHub: `{__import__('os').getenv('GITHUB_RUN_ID', 'local')}`",
         f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
         "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
-        f"\nمدل(های) واقعاً استفاده‌شده: `{', '.join(models_used) or 'ثبت نشده'}`",
+        f"\nمدل(های) تلاش‌شده: `{', '.join(models_attempted) or 'ثبت نشده'}`",
+        f"\nمدل(های) پاسخ‌گوی موفق: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
     for name, output in outputs.items():
         report.extend([f"\n\n---\n\n## {name}\n\n{output}"])

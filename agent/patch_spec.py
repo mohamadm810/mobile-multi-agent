@@ -34,8 +34,6 @@ def validate_unified_diff_header(path, unified_diff):
     lines = unified_diff.splitlines()
     if len(lines) < 3:
         raise PatchSpecError("Unified diff must include file headers and at least one hunk.")
-    if lines[0] != f"--- a/{path}" or lines[1] != f"+++ b/{path}":
-        raise PatchSpecError("Unified diff headers must exactly match the validated target path.")
     forbidden = (
         "diff --git ", "index ", "new file mode ", "deleted file mode ",
         "old mode ", "new mode ", "rename from ", "rename to ",
@@ -43,6 +41,8 @@ def validate_unified_diff_header(path, unified_diff):
     )
     if any(line.startswith(forbidden) for line in lines):
         raise PatchSpecError("Git metadata, file creation/deletion, renames, and binary patches are forbidden.")
+    if lines[0] != f"--- a/{path}" or lines[1] != f"+++ b/{path}":
+        raise PatchSpecError("Unified diff headers must exactly match the validated target path.")
     if not any(line.startswith("@@ ") for line in lines[2:]):
         raise PatchSpecError("Unified diff contains no hunks.")
     return unified_diff

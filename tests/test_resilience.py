@@ -1,8 +1,11 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from agent.resilience import CheckpointStore, call_with_retries
+from agent.resilience import (
+    CheckpointStore, CircuitBreaker, CircuitOpenError, call_with_retries,
+)
 
 
 class RetryTests(unittest.TestCase):
@@ -10,8 +13,7 @@ class RetryTests(unittest.TestCase):
         class TemporaryFailure(RuntimeError):
             retryable = True
 
-        attempts = []
-        sleeps = []
+        attempts, sleeps = [], []
 
         def operation():
             attempts.append(1)
@@ -19,10 +21,47 @@ class RetryTests(unittest.TestCase):
                 raise TemporaryFailure("temporary")
             return "recovered"
 
-        result = call_with_retries(operation, max_attempts=3, sleep=sleeps.append)
+        result = call_with_retries(
+            operation, max_attempts=3, sleep=sleeps.append,
+            jitter=lambda low, high: high,
+        )
         self.assertEqual(result, "recovered")
         self.assertEqual(len(attempts), 3)
         self.assertEqual(sleeps, [1.0, 2.0])
+
+    def test_retry_after_is_honored_and_capped(self):
+        class TemporaryFailure(RuntimeError):
+            retryable = True
+            retry_after = 4.5
+
+        sleeps = []
+        attempts = []
+
+        def operation():
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise TemporaryFailure("busy")
+            return "ok"
+
+        self.assertEqual(call_with_retries(operation, sleep=sleeps.append), "ok")
+        self.assertEqual(sleeps, [4.5])
+
+    def test_retry_after_is_capped_to_configured_maximum(self):
+        class TemporaryFailure(RuntimeError):
+            retryable = True
+            retry_after = 999
+
+        sleeps = []
+        attempts = []
+
+        def operation():
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise TemporaryFailure("busy")
+            return "ok"
+
+        call_with_retries(operation, sleep=sleeps.append, max_delay_seconds=3)
+        self.assertEqual(sleeps, [3.0])
 
     def test_does_not_retry_non_retryable_failure(self):
         attempts = []
@@ -39,9 +78,55 @@ class RetryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "between 1 and 3"):
             call_with_retries(lambda: None, max_attempts=10)
 
+    def test_total_execution_budget_is_enforced_between_attempts(self):
+        class TemporaryFailure(RuntimeError):
+            retryable = True
+
+        now = [0.0]
+        attempts = []
+
+        def operation():
+            attempts.append(1)
+            now[0] += 2.0
+            raise TemporaryFailure("still down")
+
+        with self.assertRaises(TimeoutError):
+            call_with_retries(
+                operation, max_attempts=3, sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+                jitter=lambda low, high: high, max_elapsed_seconds=1.0,
+                clock=lambda: now[0],
+            )
+        self.assertEqual(len(attempts), 1)
+
+    def test_circuit_breaker_opens_and_recovers_after_cooldown(self):
+        now = [0.0]
+        breaker = CircuitBreaker(failure_threshold=2, reset_timeout=5, clock=lambda: now[0])
+        breaker.record_failure()
+        breaker.record_failure()
+        with self.assertRaises(CircuitOpenError):
+            breaker.before_call()
+        now[0] = 5.0
+        breaker.before_call()
+        with self.assertRaises(CircuitOpenError):
+            breaker.before_call()
+        breaker.record_success()
+        breaker.before_call()
+
+    def test_retryable_failures_trip_circuit_breaker(self):
+        class TemporaryFailure(RuntimeError):
+            retryable = True
+
+        breaker = CircuitBreaker(failure_threshold=1, reset_timeout=30)
+        with self.assertRaises(TemporaryFailure):
+            call_with_retries(
+                lambda: (_ for _ in ()).throw(TemporaryFailure("down")),
+                max_attempts=1, circuit_breaker=breaker,
+            )
+        with self.assertRaises(CircuitOpenError):
+            call_with_retries(lambda: "should not run", circuit_breaker=breaker)
+
 
 class CheckpointTests(unittest.TestCase):
-
     def test_test_inventory_includes_all_test_files(self):
         from agent.run import get_unit_test_inventory
 
@@ -53,20 +138,32 @@ class CheckpointTests(unittest.TestCase):
     def test_checkpoint_round_trip_and_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CHECKPOINT.json"
-            store = CheckpointStore(path, "request-a", "source-a")
+            store = CheckpointStore(path, "request-a", "source-a", run_id="run-1", team_fingerprint="team-a")
             store.record_stage("Requirements Analyst", "verified findings")
             store.set_metadata("retry_count", 1)
 
-            resumed = CheckpointStore(path, "request-a", "source-a")
+            resumed = CheckpointStore(path, "request-a", "source-a", run_id="run-2", team_fingerprint="team-a")
             self.assertEqual(resumed.get_stage("Requirements Analyst"), "verified findings")
             self.assertEqual(resumed.get_metadata("retry_count"), 1)
+            self.assertEqual(resumed.resumed_from_run_id, "run-1")
+            self.assertIsNotNone(resumed.stage_records["Requirements Analyst"]["completed_at"])
 
-    def test_checkpoint_is_rejected_for_changed_request_or_source(self):
+    def test_checkpoint_is_rejected_for_changed_request_source_or_team(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CHECKPOINT.json"
-            CheckpointStore(path, "request-a", "source-a").record_stage("stage", "output")
-            self.assertIsNone(CheckpointStore(path, "request-b", "source-a").get_stage("stage"))
-            self.assertIsNone(CheckpointStore(path, "request-a", "source-b").get_stage("stage"))
+            CheckpointStore(path, "request-a", "source-a", team_fingerprint="team-a").record_stage("stage", "output")
+            self.assertIsNone(CheckpointStore(path, "request-b", "source-a", team_fingerprint="team-a").get_stage("stage"))
+            self.assertIsNone(CheckpointStore(path, "request-a", "source-b", team_fingerprint="team-a").get_stage("stage"))
+            self.assertIsNone(CheckpointStore(path, "request-a", "source-a", team_fingerprint="team-b").get_stage("stage"))
+
+    def test_checkpoint_detects_modified_stage_output_and_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CHECKPOINT.json"
+            CheckpointStore(path, "r", "s").record_stage("stage", "trusted")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["outputs"]["stage"] = "tampered"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertIsNone(CheckpointStore(path, "r", "s").get_stage("stage"))
 
     def test_corrupt_checkpoint_is_ignored(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -81,9 +178,7 @@ class CheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "oversized"):
                 store.record_stage("stage", "x" * 25_001)
 
-
     def test_interrupted_run_resumes_completed_agent_stages(self):
-        import json
         from unittest.mock import patch
         from agent.run import run_cycle
 
@@ -125,7 +220,6 @@ class CheckpointTests(unittest.TestCase):
                 self.assertFalse((root / "CHECKPOINT.json").exists())
                 saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
                 self.assertIn("Requirements Analyst", saved_state["resumed_agents"])
-
 
     def test_checkpointed_registry_is_revalidated_before_replay(self):
         from agent.run import normalize_team_registry

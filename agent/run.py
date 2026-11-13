@@ -198,7 +198,7 @@ def run_cycle(request=None, generator=generate):
         report.extend([f"\n\n---\n\n## {name}\n\n{output}"])
 
     WORKSPACE.mkdir(parents=True, exist_ok=True)
-    REPORT_FILE.write_text("\n".join(report) + "\n", encoding="utf-8")
+    atomic_write_text(REPORT_FILE, "\n".join(report) + "\n")
     new_state = {
         "last_run_utc": now,
         "request_snapshot": request[:5000],
@@ -212,7 +212,7 @@ def run_cycle(request=None, generator=generate):
         "github_sha": __import__("os").getenv("GITHUB_SHA"),
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",
     }
-    STATE_FILE.write_text(json.dumps(new_state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(STATE_FILE, json.dumps(new_state, ensure_ascii=False, indent=2) + "\n")
     return outputs
 
 
@@ -226,7 +226,7 @@ def write_failure_state(error):
         "last_error": str(error)[:1500],
         "next_step": "Review the Actions log, resolve the reported issue, then rerun the workflow.",
     })
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 
 
 def main():

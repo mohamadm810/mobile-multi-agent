@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
-from .resilience import CheckpointStore, CircuitBreaker, call_with_retries
+from .resilience import CheckpointStore, CircuitBreaker, RunEventJournal, RunStateMachine, call_with_retries
 from .patch_spec import PatchSpecError, validate_patch_spec, patch_proposal_fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -377,6 +377,13 @@ def run_cycle(request=None, generator=generate):
         team_fingerprint=team_fingerprint,
     )
     dependency_breaker = CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
+    journal = RunEventJournal(WORKSPACE / "EVENTS.jsonl", run_id)
+    lifecycle = RunStateMachine(journal)
+    lifecycle.transition("running")
+    if resumed_stages:
+        lifecycle.transition("recovering")
+        journal.record("run_resumed", status="checkpoint_recovered")
+        lifecycle.transition("running")
     outputs = {
         key: value for key, value in checkpoint.outputs.items()
         if key != "__hr_output__"
@@ -426,11 +433,13 @@ def run_cycle(request=None, generator=generate):
             + runtime_evidence
         )
         started = __import__("time").perf_counter()
+        journal.record("stage_started", stage=name, status="running")
         outputs[name] = call_with_retries(
             lambda: generator(role, prompt), max_attempts=1,
             max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
         )
         checkpoint.record_stage(name, outputs[name])
+        journal.record("stage_succeeded", stage=name, status="completed")
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
             "output_characters": len(outputs[name]),
@@ -442,6 +451,7 @@ def run_cycle(request=None, generator=generate):
         if name in outputs:
             continue
         started = __import__("time").perf_counter()
+        journal.record("stage_started", stage=name, status="running")
         custom_prompt = (
             context + "\n\nCUSTOM AGENT MISSION: " + custom["mission"]
             + "\n\nRun the specialist task using only the evidence and user request. "
@@ -477,6 +487,7 @@ def run_cycle(request=None, generator=generate):
         "Any manager concern must be a recommendation for human approval."
     )
     hr_started = __import__("time").perf_counter()
+    journal.record("stage_started", stage="Agent Recruitment & Governance", status="running")
     hr_output = checkpoint.get_stage("__hr_output__")
     if hr_output is None:
         hr_output = call_with_retries(
@@ -484,6 +495,7 @@ def run_cycle(request=None, generator=generate):
             max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
         )
         checkpoint.record_stage("__hr_output__", hr_output)
+    journal.record("stage_succeeded", stage="Agent Recruitment & Governance", status="completed")
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
 
     # Persist the complete HR transaction before writing TEAM.json. If the
@@ -594,6 +606,7 @@ def run_cycle(request=None, generator=generate):
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",
     }
     atomic_write_text(STATE_FILE, json.dumps(new_state, ensure_ascii=False, indent=2) + "\n")
+    lifecycle.transition("completed")
     checkpoint.clear()
     return outputs
 
@@ -656,6 +669,12 @@ def write_failure_state(error):
         "next_step": "Inspect workspace/STATE.json and workspace/REPORT.md. If recovery is paused, rerun workflow_dispatch on main; matching checkpoints resume completed stages automatically.",
     })
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+    try:
+        journal = RunEventJournal(WORKSPACE / "EVENTS.jsonl", os.getenv("GITHUB_RUN_ID") or "local")
+        journal.record("run_paused" if checkpoint_valid else "run_failed",
+                       status=recovery_status, error_type=str(error).split(":", 1)[0][:80])
+    except (OSError, ValueError):
+        pass
 
 
 def main():

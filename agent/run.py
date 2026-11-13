@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import MAX_REQUEST_CHARS
-from .gemini import AgentError, USED_MODELS, generate, reset_run_tracking
+from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, MANAGER, REVIEWER, TESTER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +122,7 @@ def run_cycle(request=None, generator=generate):
 
     now = datetime.now(timezone.utc).isoformat()
     models_used = list(USED_MODELS)
+    models_attempted = list(ATTEMPTED_MODELS)
     report = [
         "# گزارش اجرای تیم ایجنت",
         f"\nزمان اجرا (UTC): `{now}`",
@@ -142,6 +143,7 @@ def run_cycle(request=None, generator=generate):
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
         "models_used": models_used,
+        "models_attempted": models_attempted,
         "github_run_id": __import__("os").getenv("GITHUB_RUN_ID"),
         "github_sha": __import__("os").getenv("GITHUB_SHA"),
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",

@@ -12,6 +12,7 @@ from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
 from .resilience import CheckpointStore, call_with_retries
+from .patch_spec import PatchSpecError, validate_patch_spec
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace"
@@ -58,6 +59,7 @@ REPOSITORY_EVIDENCE_FILES = [
     "agent/resilience.py",
     "agent/patch_spec.py",
     "agent/patcher.py",
+    "agent/apply_proposal.py",
     ".github/workflows/run-agent.yml",
     "tests/test_agent.py",
     "tests/test_resilience.py",
@@ -87,6 +89,25 @@ def read_repository_context():
         remaining -= len(chunk)
     return "\n".join(sections)
 
+
+def persist_patch_proposal(developer_output, proposal_path):
+    """Persist only a strictly validated proposal explicitly emitted by Developer."""
+    proposal_path = Path(proposal_path)
+    marker = "PATCH_PROPOSAL_JSON:"
+    if not isinstance(developer_output, str) or marker not in developer_output:
+        proposal_path.unlink(missing_ok=True)
+        return {"status": "not_provided", "changes": 0}
+    payload = developer_output.split(marker, 1)[1].strip()
+    if payload.lower() == "none":
+        proposal_path.unlink(missing_ok=True)
+        return {"status": "none", "changes": 0}
+    try:
+        validated = validate_patch_spec(payload)
+    except (PatchSpecError, TypeError, ValueError) as exc:
+        proposal_path.unlink(missing_ok=True)
+        return {"status": "rejected", "changes": 0, "reason": str(exc)[:300]}
+    atomic_write_text(proposal_path, json.dumps(validated, ensure_ascii=False, indent=2) + "\n")
+    return {"status": "validated", "changes": len(validated["changes"])}
 
 def repository_fingerprint():
     """Hash source evidence so checkpoints never cross code revisions."""

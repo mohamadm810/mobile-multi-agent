@@ -167,6 +167,24 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_count, 4)
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_malformed_primary_response_uses_fallback_model(self, mocked_urlopen):
+        malformed = MagicMock()
+        malformed.__enter__.return_value.read.return_value = b"{not-valid-json"
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "recovered by fallback"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [malformed, success]
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            self.assertEqual(generate("role", "prompt"), "recovered by fallback")
+        self.assertEqual(mocked_urlopen.call_count, 2)
+        self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
+
     def test_reset_run_tracking_clears_models_and_restores_primary(self):
         import agent.gemini as gemini
         gemini.USED_MODELS.append("fallback-model")

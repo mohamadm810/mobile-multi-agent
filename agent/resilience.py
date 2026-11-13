@@ -100,6 +100,8 @@ def call_with_retries(
                     delay = max(0.0, float(server_delay))
                 except (TypeError, ValueError):
                     delay = 0.0
+                if delay > max_delay_seconds:
+                    raise
             else:
                 base = min(max_delay_seconds, 2.0 ** attempt)
                 delay = max(0.0, min(max_delay_seconds, float(jitter(0.0, base))))

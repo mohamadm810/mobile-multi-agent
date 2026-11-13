@@ -377,6 +377,11 @@ def run_cycle(request=None, generator=generate):
         team_fingerprint=team_fingerprint,
     )
     dependency_breaker = CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
+    outputs = {
+        key: value for key, value in checkpoint.outputs.items()
+        if key != "__hr_output__"
+    }
+    resumed_stages = list(outputs)
     journal = RunEventJournal(WORKSPACE / "EVENTS.jsonl", run_id)
     lifecycle = RunStateMachine(journal)
     lifecycle.transition("running")
@@ -384,11 +389,6 @@ def run_cycle(request=None, generator=generate):
         lifecycle.transition("recovering")
         journal.record("run_resumed", status="checkpoint_recovered")
         lifecycle.transition("running")
-    outputs = {
-        key: value for key, value in checkpoint.outputs.items()
-        if key != "__hr_output__"
-    }
-    resumed_stages = list(outputs)
     patch_proposal_path = WORKSPACE / "PATCH_PROPOSAL.json"
     patch_proposal_path.unlink(missing_ok=True)
     registry = read_team_registry()

@@ -178,6 +178,45 @@ class PatchPreparationTests(unittest.TestCase):
             self.assertEqual(changed, ["agent/example.py"])
             self.assertEqual(target.read_text(encoding="utf-8"), "keep\nnew\n")
 
+
+    def test_multi_file_commit_failure_rolls_back_already_replaced_files(self):
+        from unittest.mock import patch
+        import agent.patcher as patcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent").mkdir()
+            first = root / "agent" / "first.py"
+            second = root / "agent" / "second.py"
+            first.write_text("keep\nold-one\n", encoding="utf-8")
+            second.write_text("keep\nold-two\n", encoding="utf-8")
+            data = {"version": 1, "changes": []}
+            for name, old, new in (("first.py", "old-one", "new-one"), ("second.py", "old-two", "new-two")):
+                path = "agent/" + name
+                data["changes"].append({
+                    "path": path,
+                    "unified_diff": (
+                        f"--- a/{path}\n+++ b/{path}\n"
+                        f"@@ -1,2 +1,2 @@\n keep\n-{old}\n+{new}\n"
+                    ),
+                })
+
+            real_replace = patcher.os.replace
+            calls = [0]
+
+            def fail_second_replace(source, destination):
+                calls[0] += 1
+                if calls[0] == 2:
+                    raise OSError("simulated second-file commit failure")
+                return real_replace(source, destination)
+
+            with patch("agent.patcher.os.replace", side_effect=fail_second_replace):
+                with self.assertRaisesRegex(PatchSpecError, "original files were restored"):
+                    apply_patch_spec(root, data, authorization_phrase="APPLY_TO_BRANCH")
+
+            self.assertEqual(first.read_text(encoding="utf-8"), "keep\nold-one\n")
+            self.assertEqual(second.read_text(encoding="utf-8"), "keep\nold-two\n")
+
     def test_persist_patch_proposal_accepts_only_validated_json(self):
         import json
         from agent.run import persist_patch_proposal

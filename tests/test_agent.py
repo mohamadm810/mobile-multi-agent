@@ -256,6 +256,21 @@ class GeminiResponseTests(unittest.TestCase):
             self.assertEqual(_retry_delay(negative, 1), 0.5)
         self.assertIsNone(_retry_delay(excessive, 1))
 
+
+    def test_http_date_retry_after_is_parsed(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        future = datetime.now(timezone.utc) + timedelta(seconds=8)
+        error = urllib.error.HTTPError(
+            "https://example.invalid", 503, "busy",
+            {"Retry-After": format_datetime(future, usegmt=True)}, None
+        )
+        delay = _retry_delay(error, 1)
+        self.assertIsNotNone(delay)
+        self.assertGreaterEqual(delay, 0.0)
+        self.assertLessEqual(delay, 30.0)
+
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
     @patch("agent.gemini.time.sleep")
     @patch("agent.gemini.urllib.request.urlopen")

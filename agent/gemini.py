@@ -155,7 +155,7 @@ def _extract_openai_text(data):
     if isinstance(content, list):
         chunks = [part.get("text", "") for part in content
                   if isinstance(part, dict) and isinstance(part.get("text"), str)]
-        result = "\\n".join(chunk for chunk in chunks if chunk.strip()).strip()
+        result = "\n".join(chunk for chunk in chunks if chunk.strip()).strip()
         if result:
             return result
     raise AgentError("OpenAI-compatible provider returned empty or non-text content.", retryable=True)

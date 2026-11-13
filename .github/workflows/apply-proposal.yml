@@ -12,8 +12,8 @@ on:
           - REVIEW_ONLY
           - APPLY_TO_BRANCH
       proposal_fingerprint:
-        description: "Copy the exact SHA-256 proposal fingerprint from workspace/STATE.json"
-        required: true
+        description: "Required only for APPLY_TO_BRANCH; copy exact SHA-256 from workspace/STATE.json"
+        required: false
         type: string
 
 permissions:

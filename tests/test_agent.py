@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 import urllib.error
 from unittest.mock import patch, MagicMock

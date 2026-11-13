@@ -549,7 +549,7 @@ def write_failure_state(error):
         "checkpoint_available": checkpoint_path.is_file(),
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
         "last_error": str(error)[:1500],
-        "next_step": "Rerun the workflow; matching request/source checkpoints will resume completed stages automatically.",
+        "next_step": "Start a new workflow_dispatch run on main; matching request/source checkpoints will resume completed stages automatically.",
     })
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 

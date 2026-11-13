@@ -1,4 +1,4 @@
-"""Pure-Python, path-restricted unified-diff application. No shell or external patch tool."""
+"""Pure-Python, path-restricted patch preparation. No shell or file mutation."""
 
 import re
 from pathlib import Path, PurePosixPath
@@ -41,7 +41,7 @@ def apply_unified_diff(original, unified_diff, path):
             raise PatchSpecError("Hunks overlap or target lines outside the file.")
         result.extend(source[source_cursor:target_index])
         if new_target_index != len(result):
-            raise PatchSpecError("New-side hunk coordinates do not match the generated output.");
+            raise PatchSpecError("New-side hunk coordinates do not match the generated output.")
         source_cursor = target_index
         index += 1
         consumed_old = 0

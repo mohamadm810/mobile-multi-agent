@@ -23,8 +23,7 @@
    (Add file → Upload files). اگر فایل‌های قبلی وجود دارند، قبل از جایگزینی diff را بررسی کنید.
 4. در Settings → Secrets and variables → Actions → Secrets، مقدار
    `GEMINI_API_KEY` را به‌عنوان Repository Secret اضافه کنید.
-5. در همان بخش Variables یک متغیر `GEMINI_MODEL` بسازید؛ مقدار پیشنهادی:
-   `gemini-3.8-flash`. در صورت عدم تعریف، همین مقدار پیش‌فرض است.
+5. مدل فعلی در گردش کار روی `gemini-3.8-flash` تنظیم شده است؛ نیازی به ساخت متغیر `GEMINI_MODEL` نیست. اگر قبلاً متغیر قدیمی `gemini-2.5-flash` ساخته‌اید، آن را در Settings → Secrets and variables → Actions → Variables به `gemini-3.8-flash` تغییر دهید یا حذف کنید.
 6. در Actions گردش کار `Run Project Agent` را باز کنید و Run workflow را بزنید.
 
 ## استفاده روزمره

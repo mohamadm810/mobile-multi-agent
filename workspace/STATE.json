@@ -1,6 +1,6 @@
 {
-  "last_run_utc": "2026-11-13T10:54:06.938675+00:00",
-  "request_snapshot": "# درخواست ارزیابی سامانه چندایجنتی\n\nهدف: ارزیابی دقیق وضعیت همین مخزن و ارائه فقط اصلاحات ضروری برای پایداری، امنیت و دقت سامانه.\n\n## قواعد ارزیابی\n- سورس کامل مخزن و فایل‌های تست، مرجع وضعیت فعلی هستند.\n- inventory خودکار تست‌ها را مبنا قرار بده؛ تعداد یا نام تست‌ها را حدس نزن.\n- قابلیت پیاده‌سازی‌شده را دوباره به‌عنوان پیشنهاد معرفی نکن.\n- تست شبیه‌سازی‌شده، اجرای واقعی Gemini و نتیجه workflow تست را از هم تفکیک کن.\n- هر نقص باید با مسیر فایل/تابع، اثر، و معیار پذیرش مشخص شود.\n- خروجی نقش‌ها کوتاه، مستقل و بدون تکرار باشد.\n- فقط شکاف‌های واقعی را پیشنهاد بده؛ از refactor یا معماری‌سازی غیرضروری پرهیز کن.\n\n## دامنه\nورودی و محدودیت اندازه، هفت نقش، Gemini API، retry/fallback، redaction کلید، ثبت مدل‌ها، state/report اتمیک، concurrency و artifact پشتیبان GitHub Actions، تست‌ها و استفاده از موبایل.\n\n## محدودیت اختیارات\nنسخه فعلی فقط تحلیل و برنامه‌ریزی می‌کند. هیچ تغییر خودکار در پروژه‌های دیگر، اجرای shell دلخواه یا deploy مجاز نیست. هر توسعه اجرایی خارج از همین مخزن نیازمند تأیید صریح انسان است.\n\n## تحویل\n1. وضعیت اثبات‌شده\n2. نقص‌ها و ریسک‌های باقی‌مانده\n3. پوشش تست واقعی در برابر موارد تست‌نشده\n4. حداکثر سه اولویت ضروری با معیار پذیرش\n5. تصمیم‌های نیازمند تأیید انسان\n\n## مبنای اجرای این دور\n- آخرین نسخه تست‌ها شامل تست شکست زنجیره کامل مدل اصلی و مدل جایگزین است؛ نتیجه واقعی workflow تست را از تست‌های mock جداگانه گزارش کن.\n- مسیر کار با گوشی را از دید کاربر بررسی کن: اجرای دستی workflow، مشاهده وضعیت اجرا، دسترسی به گزارش و محدودیت‌های واقعی رابط GitHub موبایل.\n- هیچ قابلیت یا اجرای زنده‌ای را بدون شاهد در مخزن و خروجی workflow، تأییدشده اعلام نکن.\n\n## بازبینی پس از اصلاح\n- در `agent/config.py` اعتبارسنجی اعداد مثبت برای `MAX_OUTPUT_TOKENS`، `GEMINI_TIMEOUT_SECONDS` و `MAX_REQUEST_CHARS` اضافه شده است؛ رفتار و تست‌های آن را روی سورس فعلی بازبینی کن.\n- inventory تست‌ها را دوباره از فایل واقعی استخراج کن و نتیجه آخرین workflow تست را جداگانه در برابر تست‌های mock گزارش بده.\n- فقط اگر نقص جدیدی با شاهد مشخص پیدا شد پیشنهاد بده؛ از بازگویی پیشنهادهای رفع‌شده خودداری کن.",
+  "last_run_utc": "2026-11-13T11:02:48.951965+00:00",
+  "request_snapshot": "# درخواست ارزیابی سامانه چندایجنتی\n\nهدف: ارزیابی دقیق وضعیت همین مخزن و ارائه فقط اصلاحات ضروری برای پایداری، امنیت و دقت سامانه.\n\n## قواعد ارزیابی\n- سورس کامل مخزن و فایل‌های تست، مرجع وضعیت فعلی هستند.\n- inventory خودکار تست‌ها را مبنا قرار بده؛ تعداد یا نام تست‌ها را حدس نزن.\n- قابلیت پیاده‌سازی‌شده را دوباره به‌عنوان پیشنهاد معرفی نکن.\n- تست شبیه‌سازی‌شده، اجرای واقعی Gemini و نتیجه workflow تست را از هم تفکیک کن.\n- هر نقص باید با مسیر فایل/تابع، اثر، و معیار پذیرش مشخص شود.\n- خروجی نقش‌ها کوتاه، مستقل و بدون تکرار باشد.\n- فقط شکاف‌های واقعی را پیشنهاد بده؛ از refactor یا معماری‌سازی غیرضروری پرهیز کن.\n\n## دامنه\nورودی و محدودیت اندازه، هفت نقش، Gemini API، retry/fallback، redaction کلید، ثبت مدل‌ها، state/report اتمیک، concurrency و artifact پشتیبان GitHub Actions، تست‌ها و استفاده از موبایل.\n\n## محدودیت اختیارات\nنسخه فعلی فقط تحلیل و برنامه‌ریزی می‌کند. هیچ تغییر خودکار در پروژه‌های دیگر، اجرای shell دلخواه یا deploy مجاز نیست. هر توسعه اجرایی خارج از همین مخزن نیازمند تأیید صریح انسان است.\n\n## تحویل\n1. وضعیت اثبات‌شده\n2. نقص‌ها و ریسک‌های باقی‌مانده\n3. پوشش تست واقعی در برابر موارد تست‌نشده\n4. حداکثر سه اولویت ضروری با معیار پذیرش\n5. تصمیم‌های نیازمند تأیید انسان\n\n## مبنای اجرای این دور\n- آخرین نسخه تست‌ها شامل تست شکست زنجیره کامل مدل اصلی و مدل جایگزین است؛ نتیجه واقعی workflow تست را از تست‌های mock جداگانه گزارش کن.\n- مسیر کار با گوشی را از دید کاربر بررسی کن: اجرای دستی workflow، مشاهده وضعیت اجرا، دسترسی به گزارش و محدودیت‌های واقعی رابط GitHub موبایل.\n- هیچ قابلیت یا اجرای زنده‌ای را بدون شاهد در مخزن و خروجی workflow، تأییدشده اعلام نکن.\n\n## بازبینی پس از اصلاح\n- در `agent/config.py` اعتبارسنجی اعداد مثبت برای `MAX_OUTPUT_TOKENS`، `GEMINI_TIMEOUT_SECONDS` و `MAX_REQUEST_CHARS` اضافه شده است؛ رفتار و تست‌های آن را روی سورس فعلی بازبینی کن.\n- inventory تست‌ها را دوباره از فایل واقعی استخراج کن و نتیجه آخرین workflow تست را جداگانه در برابر تست‌های mock گزارش بده.\n- فقط اگر نقص جدیدی با شاهد مشخص پیدا شد پیشنهاد بده؛ از بازگویی پیشنهادهای رفع‌شده خودداری کن.\n\n## آزمون نهایی پیش از بستن نسخه اول\n- بررسی کن که `agent/gemini.py` خطاهای قطع‌شدن stream از نوع `http.client.HTTPException` را retry کند و پاسخ ساختاریافته نامعتبر را به `AgentError` روشن تبدیل کند.\n- بررسی کن که زنجیره مدل‌ها پس از شکست مدل اصلی و fallback اول، در صورت موفقیت fallback بعدی درست ادامه یابد.\n- بررسی کن که نوشتن هم‌زمان فایل با atomic replace فایل JSON ناقص یا فایل موقت باقی‌مانده تولید نکند.\n- بررسی کن که `read_request()` متن واقعی را پس از HTML comment حفظ و ورودی صرفاً template/comment را رد کند.\n- inventory دقیق تست‌ها و نتیجه آخرین Tests workflow را از شواهد واقعی استخراج کن.\n- این نسخه همچنان دقیقاً هفت نقش دارد؛ نقش جدید اضافه نکن. فقط وضعیت نهایی، ریسک‌های باقیمانده و آمادگی بستن نسخه اول را گزارش کن.",
   "status": "planning_review_required",
   "last_report": "workspace/REPORT.md",
   "completed_agents": [
@@ -20,14 +20,19 @@
   ],
   "unit_test_methods": [
     "test_atomic_write_replaces_existing_file",
+    "test_concurrent_atomic_writes_never_leave_partial_json",
     "test_documentation_agent_receives_deterministic_run_evidence",
     "test_empty_response_is_clear_error",
     "test_exhausts_primary_and_all_fallback_models",
     "test_extracts_all_text_parts",
     "test_failure_status_is_persisted",
     "test_http_error_detail_redacts_api_key",
+    "test_incomplete_http_response_retries_and_uses_fallback",
+    "test_intermediate_fallback_model_can_succeed",
     "test_invalid_retry_after_uses_exponential_default",
     "test_main_persists_unexpected_failure_without_secret",
+    "test_malformed_candidate_is_clear_error",
+    "test_malformed_content_parts_is_clear_error",
     "test_malformed_json_response_raises_agent_error",
     "test_missing_candidates_is_clear_error",
     "test_missing_key_fails_before_network",
@@ -35,6 +40,9 @@
     "test_positive_integer_env_parses_valid_value",
     "test_positive_integer_env_rejects_invalid_values",
     "test_positive_integer_env_uses_default_when_unset",
+    "test_read_request_keeps_real_text_after_html_comment",
+    "test_read_request_rejects_html_comment_only_template",
+    "test_read_request_rejects_oversized_raw_content",
     "test_rejects_empty_request",
     "test_rejects_oversized_request",
     "test_repository_context_includes_complete_test_file",
@@ -44,7 +52,7 @@
     "test_transport_errors_retry_then_use_fallback",
     "test_uses_fallback_model_after_primary_503"
   ],
-  "github_run_id": "43412653331",
-  "github_sha": "258466135df1b15b0fd38e5cd678314e65f55791",
+  "github_run_id": "43413808588",
+  "github_sha": "fcabb775dc822439c45bd9fd6206968a9a324504",
   "next_step": "Review the report, approve decisions, update REQUEST.md, then run again."
 }

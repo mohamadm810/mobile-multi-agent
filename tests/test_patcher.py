@@ -120,20 +120,20 @@ class PatchPreparationTests(unittest.TestCase):
             root = Path(directory)
             (root / "agent").mkdir()
             target = root / "agent" / "example.py"
-            target.write_text("keep\\nold\\n", encoding="utf-8")
+            target.write_text("keep\nold\n", encoding="utf-8")
             with self.assertRaisesRegex(PatchSpecError, "authorization"):
                 apply_patch_spec(root, proposal(), authorization_phrase="REVIEW_ONLY")
-            self.assertEqual(target.read_text(encoding="utf-8"), "keep\\nold\\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep\nold\n")
 
     def test_applies_patch_after_explicit_authorization(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent").mkdir()
             target = root / "agent" / "example.py"
-            target.write_text("keep\\nold\\n", encoding="utf-8")
+            target.write_text("keep\nold\n", encoding="utf-8")
             changed = apply_patch_spec(root, proposal(), authorization_phrase="APPLY_TO_BRANCH")
             self.assertEqual(changed, ["agent/example.py"])
-            self.assertEqual(target.read_text(encoding="utf-8"), "keep\\nnew\\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep\nnew\n")
 
     def test_rejects_missing_target_file(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -20,6 +20,7 @@ class AgentError(RuntimeError):
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS_PER_MODEL = 3
 USED_MODELS = []
+ACTIVE_MODEL = MODEL
 
 
 def _extract_text(data):
@@ -98,15 +99,17 @@ def generate(role: str, prompt: str) -> str:
         },
     }
 
-    models = list(dict.fromkeys([MODEL, *FALLBACK_MODELS]))
+    global ACTIVE_MODEL
+    models = list(dict.fromkeys([ACTIVE_MODEL, *FALLBACK_MODELS]))
     for index, model in enumerate(models):
         try:
             result = _generate_with_model(model, payload, key)
+            ACTIVE_MODEL = model
             if model not in USED_MODELS:
                 USED_MODELS.append(model)
             return result
         except AgentError as exc:
-            if index < len(models) - 1 and ("HTTP 503" in str(exc) or "HTTP 429" in str(exc)):
+            if index < len(models) - 1 and any(f"HTTP {code}" in str(exc) for code in RETRYABLE_HTTP_CODES):
                 continue
             raise
     raise AgentError("All configured Gemini models failed.")

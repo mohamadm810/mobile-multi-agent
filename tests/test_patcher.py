@@ -85,6 +85,11 @@ class UnifiedDiffTests(unittest.TestCase):
         with self.assertRaisesRegex(PatchSpecError, "counts"):
             apply_unified_diff("old\n", diff, "agent/example.py")
 
+    def test_rejects_inconsistent_new_side_hunk_coordinate(self):
+        diff = "--- a/agent/example.py\n+++ b/agent/example.py\n@@ -1 +2 @@\n-old\n+new\n"
+        with self.assertRaisesRegex(PatchSpecError, "New-side hunk coordinates"):
+            apply_unified_diff("old\n", diff, "agent/example.py")
+
     def test_applies_insertion_at_file_start(self):
         diff = "--- a/agent/example.py\n+++ b/agent/example.py\n@@ -0,0 +1 @@\n+first\n"
         self.assertEqual(apply_unified_diff("second\n", diff, "agent/example.py"), "first\nsecond\n")

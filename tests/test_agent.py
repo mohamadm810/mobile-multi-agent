@@ -594,5 +594,71 @@ class AgentGovernanceTests(unittest.TestCase):
         self.assertEqual(registry["custom_agents"], [])
 
 
+
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "openai-test-key"}, clear=True)
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_openai_compatible_provider_works_without_gemini_secret(self, mocked_urlopen):
+        import agent.gemini as gemini
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": "independent provider ok"}}]
+        }).encode()
+        mocked_urlopen.return_value = response
+        gemini.ATTEMPTED_MODELS.clear()
+        gemini.USED_MODELS.clear()
+        self.assertEqual(generate("system role", "user prompt"), "independent provider ok")
+        request = mocked_urlopen.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/chat/completions"))
+        self.assertEqual(request.get_header("Authorization"), "Bearer openai-test-key")
+        self.assertIn("openai:gpt-4.1-mini", gemini.USED_MODELS)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-key", "OPENAI_API_KEY": "openai-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_independent_provider_is_used_after_all_gemini_models_are_temporarily_unavailable(
+        self, mocked_urlopen, _sleep
+    ):
+        import agent.gemini as gemini
+        failures = [
+            urllib.error.HTTPError("https://example.invalid", 503, "busy", {}, io.BytesIO(b"busy"))
+            for _ in range(6)
+        ]
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": "cross-provider recovery"}}]
+        }).encode()
+        mocked_urlopen.side_effect = [*failures, success]
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            self.assertEqual(generate("role", "prompt"), "cross-provider recovery")
+        self.assertEqual(mocked_urlopen.call_count, 7)
+        self.assertTrue(mocked_urlopen.call_args.args[0].full_url.endswith("/chat/completions"))
+        self.assertIn("openai:gpt-4.1-mini", gemini.USED_MODELS)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-key", "OPENAI_API_KEY": "openai-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_non_retryable_gemini_failure_does_not_switch_provider(self, mocked_urlopen):
+        mocked_urlopen.side_effect = urllib.error.HTTPError(
+            "https://example.invalid", 403, "forbidden", {}, io.BytesIO(b"forbidden")
+        )
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", []):
+            with self.assertRaisesRegex(AgentError, "HTTP 403"):
+                generate("role", "prompt")
+        self.assertEqual(mocked_urlopen.call_count, 1)
+
+    def test_openai_base_url_rejects_non_https_and_embedded_credentials(self):
+        from agent.gemini import _openai_endpoint
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": "http://example.invalid/v1"}):
+            with self.assertRaisesRegex(AgentError, "HTTPS"):
+                _openai_endpoint()
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": "https://user:pass@example.invalid/v1"}):
+            with self.assertRaisesRegex(AgentError, "HTTPS"):
+                _openai_endpoint()
+
+
 if __name__ == "__main__":
     unittest.main()

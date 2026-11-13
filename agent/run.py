@@ -9,13 +9,16 @@ from pathlib import Path
 
 from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
-from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, MANAGER, REVIEWER, TESTER
+from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace"
 REQUEST_FILE = WORKSPACE / "REQUEST.md"
 STATE_FILE = WORKSPACE / "STATE.json"
 REPORT_FILE = WORKSPACE / "REPORT.md"
+TEAM_FILE = WORKSPACE / "TEAM.json"
+MAX_CUSTOM_AGENTS = 5
+MAX_STAFFING_ACTIONS = 2
 
 STAGES = [
     ("Requirements Analyst", ANALYST),
@@ -126,6 +129,93 @@ def read_state():
         return {"warning": "Previous state file was invalid; starting a fresh state."}
 
 
+
+CORE_AGENT_NAMES = {name for name, _ in STAGES} | {"Agent Recruitment & Governance"}
+
+
+def read_team_registry():
+    """Load only validated custom-agent definitions; never override protected core roles."""
+    if not TEAM_FILE.is_file():
+        return {"version": 1, "custom_agents": [], "archived_agents": []}
+    try:
+        data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "custom_agents": [], "archived_agents": []}
+    if not isinstance(data, dict) or not isinstance(data.get("custom_agents"), list):
+        return {"version": 1, "custom_agents": [], "archived_agents": []}
+    active, seen = [], set()
+    for item in data["custom_agents"]:
+        if not isinstance(item, dict):
+            continue
+        name, prompt, mission = item.get("name"), item.get("prompt"), item.get("mission")
+        if (not isinstance(name, str) or not isinstance(prompt, str)
+                or not isinstance(mission, str) or name in CORE_AGENT_NAMES
+                or not 3 <= len(name.strip()) <= 60 or not 50 <= len(prompt) <= 4000
+                or not 3 <= len(mission.strip()) <= 300 or name in seen):
+            continue
+        seen.add(name)
+        active.append({"name": name.strip(), "mission": mission.strip(), "prompt": prompt})
+    data["version"] = 1
+    data["custom_agents"] = active[:MAX_CUSTOM_AGENTS]
+    data["archived_agents"] = data.get("archived_agents", [])[-50:] if isinstance(data.get("archived_agents", []), list) else []
+    return data
+
+
+def _extract_hr_json(output):
+    """Parse strict JSON from the HR agent, allowing a single fenced JSON response."""
+    text = output.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^\`\`\`(?:json)?\s*|\s*\`\`\`$", "", text, flags=re.IGNORECASE)
+    data = json.loads(text)
+    if not isinstance(data, dict) or not isinstance(data.get("actions", []), list):
+        raise ValueError("HR response must be a JSON object with an actions array.")
+    return data
+
+
+def apply_hr_decisions(output, registry):
+    """Apply bounded HR changes to custom agents only; manager/core roles are immutable."""
+    decision = _extract_hr_json(output)
+    actions = decision.get("actions", [])
+    if len(actions) > MAX_STAFFING_ACTIONS:
+        raise ValueError("HR exceeded the per-run staffing action limit.")
+    applied, archived = [], registry.setdefault("archived_agents", [])
+    active = registry.setdefault("custom_agents", [])
+    for action in actions:
+        if not isinstance(action, dict):
+            raise ValueError("Malformed HR staffing action.")
+        kind, name = action.get("action"), action.get("name")
+        if not isinstance(name, str) or name in CORE_AGENT_NAMES:
+            raise ValueError("HR cannot change protected core roles or the Central Supervisor.")
+        existing = next((agent for agent in active if agent["name"] == name), None)
+        if kind == "hire":
+            mission, prompt = action.get("mission"), action.get("prompt")
+            if existing or any(x.get("name") == name for x in archived):
+                raise ValueError("Duplicate or previously retired custom-agent name.")
+            if len(active) >= MAX_CUSTOM_AGENTS:
+                raise ValueError("Maximum active custom-agent count reached.")
+            if (not isinstance(mission, str) or not 3 <= len(mission.strip()) <= 300
+                    or not isinstance(prompt, str) or not 50 <= len(prompt) <= 4000
+                    or len(name.strip()) < 3 or len(name) > 60):
+                raise ValueError("Invalid custom-agent definition.")
+            active.append({"name": name.strip(), "mission": mission.strip(), "prompt": prompt})
+            applied.append(f"Hired {name}; it will join the next cycle.")
+        elif kind == "retire":
+            if existing is None:
+                raise ValueError("Only an active custom agent can be retired.")
+            reason = action.get("reason")
+            if not isinstance(reason, str) or len(reason.strip()) < 8:
+                raise ValueError("Retirement requires an evidence-based reason.")
+            active.remove(existing)
+            archived.append({"name": name, "mission": existing["mission"],
+                             "reason": reason.strip(), "archived_utc": datetime.now(timezone.utc).isoformat()})
+            applied.append(f"Retired {name}; its record was archived.")
+        else:
+            raise ValueError("Unsupported HR action.")
+    registry["archived_agents"] = archived[-50:]
+    return decision, applied
+
+
+
 def run_cycle(request=None, generator=generate):
     reset_run_tracking()
     request = read_request() if request is None else request.strip()
@@ -152,6 +242,9 @@ def run_cycle(request=None, generator=generate):
         + "Use this exact count and list; do not estimate, omit tests, or claim the test file is absent."
     )
     outputs = {}
+    registry = read_team_registry()
+    custom_agents = registry["custom_agents"]
+    role_metrics = {}
     prior_for_stage = {
         "Requirements Analyst": [],
         "Software Architect": ["Requirements Analyst"],
@@ -185,7 +278,63 @@ def run_cycle(request=None, generator=generate):
             + ("\n\nRELEVANT PRIOR FINDINGS (reference only; do not repeat):\n" + prior if prior else "")
             + runtime_evidence
         )
+        started = __import__("time").perf_counter()
         outputs[name] = generator(role, prompt)
+        role_metrics[name] = {
+            "duration_seconds": round(__import__("time").perf_counter() - started, 3),
+            "output_characters": len(outputs[name]),
+            "status": "success",
+        }
+
+    for custom in custom_agents:
+        name = custom["name"]
+        started = __import__("time").perf_counter()
+        custom_prompt = (
+            context + "\\n\\nCUSTOM AGENT MISSION: " + custom["mission"]
+            + "\\n\\nRun the specialist task using only the evidence and user request. "
+            "Return concise findings with evidence, uncertainty, and actionable recommendations."
+            + "\\n\\nPRIOR TEAM OUTPUTS:\\n"
+            + "\\n\\n".join(f"## {key}\\n{value[:2500]}" for key, value in outputs.items())
+        )
+        outputs[name] = generator(custom["prompt"], custom_prompt)
+        role_metrics[name] = {
+            "duration_seconds": round(__import__("time").perf_counter() - started, 3),
+            "output_characters": len(outputs[name]),
+            "status": "success",
+        }
+
+    hr_prompt = (
+        context + "\\n\\nTEAM ROSTER (custom agents only):\\n"
+        + json.dumps(custom_agents, ensure_ascii=False)[:8000]
+        + "\\n\\nPERFORMANCE METRICS (latency and output size; not quality scores):\\n"
+        + json.dumps(role_metrics, ensure_ascii=False)
+        + "\\n\\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\\n"
+        + "\\n\\n".join(f"## {key}\\n{value[:2500]}" for key, value in outputs.items())
+        + "\\n\\nReturn the required strict JSON. Apply changes only to custom agents. "
+        "Any manager concern must be a recommendation for human approval."
+    )
+    hr_output = generator(HR, hr_prompt)
+    try:
+        hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
+        hr_status = "valid"
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
+                       "manager_review": "none", "actions": []}
+        hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
+        hr_status = "rejected"
+    outputs["Agent Recruitment & Governance"] = (
+        "### HR decision\\n" + str(hr_decision.get("summary", "No summary supplied."))
+        + "\\n\\n### Manager review\\n" + str(hr_decision.get("manager_review", "none"))
+        + "\\n\\n### Applied staffing actions\\n"
+        + ("\\n".join("- " + item for item in hr_applied) if hr_applied else "- No staffing changes.")
+        + "\\n\\n### HR response status\\n" + hr_status
+    )
+    role_metrics["Agent Recruitment & Governance"] = {
+        "status": "success" if hr_status == "valid" else "rejected",
+        "output_characters": len(hr_output),
+    }
+    if hr_status == "valid" and (hr_applied or not TEAM_FILE.exists()):
+        atomic_write_text(TEAM_FILE, json.dumps(registry, ensure_ascii=False, indent=2) + "\\n")
 
     now = datetime.now(timezone.utc).isoformat()
     for role_name, role_output in outputs.items():
@@ -224,7 +373,7 @@ def run_cycle(request=None, generator=generate):
         "request_snapshot": request[:5000],
         "status": "planning_review_required",
         "last_report": "workspace/REPORT.md",
-        "completed_agents": list(outputs.keys()),
+        "completed_agents": list(outputs.keys()),\n        "role_metrics": role_metrics,\n        "team_registry": "workspace/TEAM.json",\n        "active_custom_agents": [item["name"] for item in registry["custom_agents"]],\n        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],\n        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
         "models_used": models_used,
         "models_attempted": models_attempted,
         "unit_test_methods": unit_test_methods,

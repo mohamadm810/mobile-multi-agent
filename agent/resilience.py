@@ -143,8 +143,7 @@ class CheckpointStore:
         if not isinstance(data, dict) or data.get("version") != CHECKPOINT_VERSION:
             return
         if (data.get("request_fingerprint") != self.request_fingerprint
-                or data.get("source_fingerprint") != self.source_fingerprint
-                or data.get("team_fingerprint") != self.team_fingerprint):
+                or data.get("source_fingerprint") != self.source_fingerprint):
             return
         supplied_checksum = data.get("checksum")
         body = {key: value for key, value in data.items() if key != "checksum"}
@@ -158,6 +157,20 @@ class CheckpointStore:
                 or not isinstance(metadata, dict) or not isinstance(records, dict)
                 or set(outputs) != set(records)):
             return
+        if data.get("team_fingerprint") != self.team_fingerprint:
+            # HR writes the validated registry after persisting its transaction.
+            # A crash between that write and final report publication must still
+            # resume, but only when the current registry exactly matches the
+            # transaction's recorded post-commit fingerprint.
+            transaction = metadata.get("hr_transaction")
+            committed_fingerprint = (
+                transaction.get("team_fingerprint_after")
+                if isinstance(transaction, dict) and transaction.get("status") == "valid"
+                else None
+            )
+            if (not isinstance(committed_fingerprint, str)
+                    or committed_fingerprint != self.team_fingerprint):
+                return
         clean = {}
         total = 0
         for name, output in outputs.items():

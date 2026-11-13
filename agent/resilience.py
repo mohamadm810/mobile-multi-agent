@@ -266,7 +266,7 @@ class CheckpointStore:
 
 MAX_JOURNAL_EVENTS = 500
 MAX_JOURNAL_BYTES = 200_000
-JOURNAL_EVENT_TYPES = {"state_transition", "run_resumed", "stage_started", "stage_succeeded", "run_paused", "run_failed"}
+JOURNAL_EVENT_TYPES = {"state_transition", "run_resumed", "stage_started", "stage_succeeded", "stage_failed", "run_paused", "run_failed"}
 
 
 class RunEventJournal:

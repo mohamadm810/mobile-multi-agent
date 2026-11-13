@@ -140,9 +140,9 @@ def read_team_registry():
     try:
         data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
+        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
     if not isinstance(data, dict) or not isinstance(data.get("custom_agents"), list):
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
+        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
     active, seen = [], set()
     for item in data["custom_agents"]:
         if not isinstance(item, dict):
@@ -358,8 +358,9 @@ def run_cycle(request=None, generator=generate):
         }
 
     hr_prompt = (
-        context + "\n\nTEAM ROSTER (custom agents only):\n"
-        + json.dumps(custom_agents, ensure_ascii=False)[:8000]
+        context + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
+        + json.dumps({"custom_agents": custom_agents, "disabled_agents": registry["disabled_agents"],
+                      "role_overrides": list(registry["role_overrides"].keys())}, ensure_ascii=False)[:8000]
         + "\n\nPERFORMANCE METRICS (latency and output size; not quality scores):\n"
         + json.dumps(role_metrics, ensure_ascii=False)
         + "\n\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\n"

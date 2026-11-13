@@ -702,8 +702,11 @@ def run_cycle(request=None, generator=generate):
                       "Review the report, approve decisions, update REQUEST.md, then run again."),
     }
     atomic_write_text(STATE_FILE, json.dumps(new_state, ensure_ascii=False, indent=2) + "\n")
-    lifecycle.transition("completed")
-    if not upstream_degraded:
+    if upstream_degraded:
+        journal.record("run_paused", status="recovery_required")
+        lifecycle.transition("paused_recovery_required")
+    else:
+        lifecycle.transition("completed")
         checkpoint.clear()
     return outputs
 

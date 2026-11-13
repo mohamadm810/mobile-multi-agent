@@ -72,6 +72,51 @@ class CheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "oversized"):
                 store.record_stage("stage", "x" * 25_001)
 
+
+    def test_interrupted_run_resumes_completed_agent_stages(self):
+        import json
+        from unittest.mock import patch
+        from agent.run import run_cycle
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_patches = [
+                patch("agent.run.WORKSPACE", root),
+                patch("agent.run.STATE_FILE", root / "STATE.json"),
+                patch("agent.run.REPORT_FILE", root / "REPORT.md"),
+                patch("agent.run.TEAM_FILE", root / "TEAM.json"),
+                patch("agent.run.read_state", return_value={"status": "not_started"}),
+                patch("agent.run.read_repository_context", return_value="source evidence"),
+            ]
+            first_calls = []
+
+            def failing_generator(role, prompt):
+                first_calls.append(role)
+                if len(first_calls) == 2:
+                    raise RuntimeError("simulated interruption")
+                return "first stage completed"
+
+            with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], common_patches[5]:
+                with self.assertRaisesRegex(RuntimeError, "simulated interruption"):
+                    run_cycle("resume this request", generator=failing_generator)
+
+                checkpoint = json.loads((root / "CHECKPOINT.json").read_text(encoding="utf-8"))
+                self.assertIn("Requirements Analyst", checkpoint["outputs"])
+
+                second_calls = []
+
+                def successful_generator(role, prompt):
+                    second_calls.append(role)
+                    if role == __import__("agent.roles", fromlist=["HR"]).HR:
+                        return json.dumps({"summary": "complete", "manager_review": "none", "actions": []})
+                    return "completed"
+
+                run_cycle("resume this request", generator=successful_generator)
+                self.assertNotIn(first_calls[0], second_calls)
+                self.assertFalse((root / "CHECKPOINT.json").exists())
+                saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
+                self.assertIn("Requirements Analyst", saved_state["resumed_agents"])
+
     def test_clear_removes_checkpoint_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CHECKPOINT.json"

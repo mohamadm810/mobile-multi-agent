@@ -501,6 +501,40 @@ class AgentGovernanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate of a protected core role"):
             apply_hr_decisions(payload, registry)
 
+
+    def test_hr_can_retire_non_manager_core_role(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": [],
+                    "role_overrides": {}, "disabled_agents": []}
+        payload = json.dumps({"actions": [{
+            "action": "retire", "name": "Independent Tester",
+            "reason": "Repeated evidence shows its checks duplicate the independent reviewer.",
+        }]})
+        _, applied = apply_hr_decisions(payload, registry)
+        self.assertEqual(registry["disabled_agents"], ["Independent Tester"])
+        self.assertIn("disabled", applied[0])
+
+    def test_hr_can_restore_retired_core_role(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": [],
+                    "role_overrides": {}, "disabled_agents": ["Independent Tester"]}
+        payload = json.dumps({"actions": [{"action": "restore", "name": "Independent Tester"}]})
+        _, applied = apply_hr_decisions(payload, registry)
+        self.assertEqual(registry["disabled_agents"], [])
+        self.assertIn("Restored", applied[0])
+
+    def test_hr_can_restore_archived_custom_agent(self):
+        from agent.run import apply_hr_decisions
+        prompt = "You are a specialist. " + ("Follow evidence and report findings. " * 3)
+        registry = {"version": 1, "custom_agents": [], "role_overrides": {}, "disabled_agents": [],
+                    "archived_agents": [{"name": "Archived Specialist", "mission": "Specialist review",
+                                        "prompt": prompt, "kind": "custom"}]}
+        payload = json.dumps({"actions": [{"action": "restore", "name": "Archived Specialist"}]})
+        _, applied = apply_hr_decisions(payload, registry)
+        self.assertEqual(registry["custom_agents"][0]["name"], "Archived Specialist")
+        self.assertEqual(registry["archived_agents"], [])
+        self.assertIn("Restored", applied[0])
+
     def test_hr_rejects_invalid_json_without_changes(self):
         from agent.run import apply_hr_decisions
         registry = {"version": 1, "custom_agents": [], "archived_agents": []}

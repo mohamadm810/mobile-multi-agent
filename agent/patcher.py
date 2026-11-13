@@ -39,9 +39,12 @@ def apply_unified_diff(original, unified_diff, path):
         if (old_count > 0 and old_start < 1) or (new_count > 0 and new_start < 1):
             raise PatchSpecError("Invalid zero-based hunk coordinates.")
         target_index = old_start if old_count == 0 else old_start - 1
+        new_target_index = new_start if new_count == 0 else new_start - 1
         if target_index < source_cursor or target_index > len(source):
             raise PatchSpecError("Hunks overlap or target lines outside the file.")
         result.extend(source[source_cursor:target_index])
+        if new_target_index != len(result):
+            raise PatchSpecError("New-side hunk coordinates do not match the generated output.");
         source_cursor = target_index
         index += 1
         consumed_old = 0
@@ -124,8 +127,8 @@ def apply_patch_spec(repository_root, proposal):
                 handle.write(updated)
                 handle.flush()
                 os.fsync(handle.fileno())
-            temporary.chmod(mode)
             temporary_files.append((temporary, target))
+            temporary.chmod(mode)
         for temporary, target in temporary_files:
             os.replace(temporary, target)
         return [change["path"] for change in validated["changes"]]

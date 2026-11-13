@@ -61,7 +61,7 @@ REPOSITORY_EVIDENCE_FILES = [
     "agent/resilience.py",
     "tests/test_resilience.py",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 65000
+MAX_REPOSITORY_CONTEXT_CHARS = 85000
 
 
 def read_repository_context():

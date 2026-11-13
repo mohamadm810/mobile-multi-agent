@@ -127,6 +127,29 @@ class GeminiResponseTests(unittest.TestCase):
         )
         self.assertEqual(_retry_delay(error, 2), 4.0)
 
+    def test_retry_after_is_clamped_to_safe_bounds(self):
+        negative = urllib.error.HTTPError(
+            "https://example.invalid", 503, "busy", {"Retry-After": "-10"}, None
+        )
+        excessive = urllib.error.HTTPError(
+            "https://example.invalid", 503, "busy", {"Retry-After": "120"}, None
+        )
+        self.assertEqual(_retry_delay(negative, 1), 1.0)
+        self.assertEqual(_retry_delay(excessive, 1), 30.0)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_malformed_json_response_raises_agent_error(self, mocked_urlopen):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"{not-valid-json"
+        mocked_urlopen.return_value = response
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", []):
+            with self.assertRaisesRegex(AgentError, "invalid response"):
+                generate("role", "prompt")
+        self.assertEqual(mocked_urlopen.call_count, 1)
+
 
 class FailureStateTests(unittest.TestCase):
     def test_failure_status_is_persisted(self):

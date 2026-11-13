@@ -14,6 +14,8 @@ PROPOSAL_FILE = ROOT / "workspace" / "PATCH_PROPOSAL.json"
 def main():
     if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
         raise PatchSpecError("Patch application is allowed only from manual workflow dispatch.")
+    if os.environ.get("GITHUB_ACTOR") != "mohamadm810":
+        raise PatchSpecError("Only the repository owner may authorize patch application.")
     if os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise PatchSpecError("Patch application must be dispatched from main.")
     authorization = os.environ.get("PATCH_AUTHORIZATION", "")

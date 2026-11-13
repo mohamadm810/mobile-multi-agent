@@ -50,6 +50,20 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
 
+class FailureStateTests(unittest.TestCase):
+    def test_failure_status_is_persisted(self):
+        from agent.run import write_failure_state
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "STATE.json"
+            with patch("agent.run.STATE_FILE", state_path), patch(
+                "agent.run.read_state", return_value={"status": "not_started"}
+            ):
+                write_failure_state(AgentError("Gemini API HTTP 503"))
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["status"], "failed")
+            self.assertIn("HTTP 503", saved["last_error"])
+
+
 class RequestValidationTests(unittest.TestCase):
     def test_rejects_empty_request(self):
         from agent.run import run_cycle

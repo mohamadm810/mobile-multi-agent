@@ -311,5 +311,82 @@ class PatchPreparationTests(unittest.TestCase):
                 prepare_patch_spec(root, proposal())
 
 
+
+class SingleUseApprovalTests(unittest.TestCase):
+    def _valid_proposal_context(self):
+        import hashlib
+        from agent.patch_spec import patch_proposal_fingerprint
+
+        request = "Implement the reviewed code change."
+        source = "verified-source-fingerprint"
+        data = proposal()
+        fingerprint = patch_proposal_fingerprint(data)
+        state = {
+            "status": "planning_review_required",
+            "request_fingerprint": hashlib.sha256(request.encode("utf-8")).hexdigest(),
+            "source_fingerprint": source,
+            "patch_proposal_status": {
+                "status": "validated",
+                "proposal_fingerprint": fingerprint,
+            },
+        }
+        return state, data, request, source, fingerprint
+
+    def test_approval_is_consumed_once_and_bound_to_workflow_attempt(self):
+        from unittest.mock import patch
+        from agent.apply_proposal import consume_approval, require_consumed_approval
+
+        state, data, request, source, fingerprint = self._valid_proposal_context()
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "APPROVAL_LEDGER.json"
+            with patch("agent.apply_proposal.APPROVAL_LEDGER_FILE", ledger):
+                consumed = consume_approval(
+                    state, data, request, source,
+                    expected_fingerprint=fingerprint,
+                    actor="mohamadm810", run_id="run-100", run_attempt=1,
+                )
+                self.assertEqual(consumed, fingerprint)
+                self.assertTrue(require_consumed_approval(
+                    fingerprint, actor="mohamadm810", run_id="run-100", run_attempt=1,
+                ))
+                with self.assertRaisesRegex(PatchSpecError, "already been consumed"):
+                    consume_approval(
+                        state, data, request, source,
+                        expected_fingerprint=fingerprint,
+                        actor="mohamadm810", run_id="run-101", run_attempt=1,
+                    )
+                with self.assertRaisesRegex(PatchSpecError, "No matching one-time approval"):
+                    require_consumed_approval(
+                        fingerprint, actor="mohamadm810", run_id="run-100", run_attempt=2,
+                    )
+
+    def test_wrong_reviewed_fingerprint_is_rejected_before_ledger_write(self):
+        from unittest.mock import patch
+        from agent.apply_proposal import consume_approval
+
+        state, data, request, source, fingerprint = self._valid_proposal_context()
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "APPROVAL_LEDGER.json"
+            with patch("agent.apply_proposal.APPROVAL_LEDGER_FILE", ledger):
+                with self.assertRaisesRegex(PatchSpecError, "does not match"):
+                    consume_approval(
+                        state, data, request, source,
+                        expected_fingerprint="0" * 64,
+                        actor="mohamadm810", run_id="run-100", run_attempt=1,
+                    )
+                self.assertFalse(ledger.exists())
+
+    def test_corrupt_approval_ledger_fails_closed(self):
+        from unittest.mock import patch
+        from agent.apply_proposal import load_approval_ledger
+
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "APPROVAL_LEDGER.json"
+            ledger.write_text("{invalid", encoding="utf-8")
+            with patch("agent.apply_proposal.APPROVAL_LEDGER_FILE", ledger):
+                with self.assertRaisesRegex(PatchSpecError, "unreadable"):
+                    load_approval_ledger()
+
+
 if __name__ == "__main__":
     unittest.main()

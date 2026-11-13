@@ -394,6 +394,8 @@ def run_cycle(request=None, generator=generate):
     registry = read_team_registry()
     custom_agents = registry["custom_agents"]
     role_metrics = {}
+    failed_agents = []
+    upstream_degraded = False
     prior_for_stage = {
         "Requirements Analyst": [],
         "Software Architect": ["Requirements Analyst"],
@@ -434,11 +436,41 @@ def run_cycle(request=None, generator=generate):
         )
         started = __import__("time").perf_counter()
         journal.record("stage_started", stage=name, status="running")
-        outputs[name] = call_with_retries(
-            lambda: generator(role, prompt), max_attempts=1,
-            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
-        )
-        checkpoint.record_stage(name, outputs[name])
+        try:
+            stage_output = call_with_retries(
+                lambda: generator(role, prompt), max_attempts=1,
+                max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
+            )
+        except Exception as exc:
+            # The Central Supervisor is the coordination authority: without it,
+            # fail closed. Other roles are isolated so useful work can continue.
+            failure_policy = classify_failure(exc)
+            if name == "Central Supervisor" or not failure_policy["retryable"]:
+                journal.record("stage_failed", stage=name, status="critical_failure",
+                               error_type=type(exc).__name__)
+                raise
+            category = failure_policy["category"]
+            failed_agents.append(name)
+            upstream_degraded = True
+            role_metrics[name] = {
+                "duration_seconds": round(__import__("time").perf_counter() - started, 3),
+                "output_characters": 0,
+                "status": "unavailable",
+                "failure_category": category,
+            }
+            outputs[name] = (
+                f"### ROLE UNAVAILABLE — {name}\n"
+                f"This role did not complete. Failure category: {category}. "
+                "No findings are inferred or fabricated. Retry this role in the next run."
+            )
+            journal.record("stage_failed", stage=name, status="isolated_failure",
+                           error_type=type(exc).__name__)
+            continue
+        outputs[name] = stage_output
+        # Once a role fails, do not checkpoint downstream conclusions: they
+        # may depend on missing evidence and must be regenerated on resume.
+        if not upstream_degraded:
+            checkpoint.record_stage(name, outputs[name])
         journal.record("stage_succeeded", stage=name, status="completed")
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
@@ -459,11 +491,36 @@ def run_cycle(request=None, generator=generate):
             + "\n\nPRIOR TEAM OUTPUTS:\n"
             + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
         )
-        outputs[name] = call_with_retries(
-            lambda: generator(custom["prompt"], custom_prompt), max_attempts=1,
-            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
-        )
-        checkpoint.record_stage(name, outputs[name])
+        try:
+            custom_output = call_with_retries(
+                lambda: generator(custom["prompt"], custom_prompt), max_attempts=1,
+                max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
+            )
+        except Exception as exc:
+            failure_policy = classify_failure(exc)
+            if not failure_policy["retryable"]:
+                journal.record("stage_failed", stage=name, status="non_retryable_failure",
+                               error_type=type(exc).__name__)
+                raise
+            category = failure_policy["category"]
+            failed_agents.append(name)
+            upstream_degraded = True
+            outputs[name] = (
+                f"### CUSTOM ROLE UNAVAILABLE — {name}\n"
+                f"Failure category: {category}. No findings are inferred. Retry next run."
+            )
+            journal.record("stage_failed", stage=name, status="isolated_failure",
+                           error_type=type(exc).__name__)
+            role_metrics[name] = {
+                "duration_seconds": round(__import__("time").perf_counter() - started, 3),
+                "output_characters": 0,
+                "status": "unavailable",
+                "failure_category": category,
+            }
+            continue
+        outputs[name] = custom_output
+        if not upstream_degraded:
+            checkpoint.record_stage(name, outputs[name])
         journal.record("stage_succeeded", stage=name, status="completed")
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
@@ -490,46 +547,74 @@ def run_cycle(request=None, generator=generate):
     hr_started = __import__("time").perf_counter()
     journal.record("stage_started", stage="Agent Recruitment & Governance", status="running")
     hr_output = checkpoint.get_stage("__hr_output__")
-    if hr_output is None:
-        hr_output = call_with_retries(
-            lambda: generator(HR, hr_prompt), max_attempts=1,
-            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
-        )
-        checkpoint.record_stage("__hr_output__", hr_output)
-    journal.record("stage_succeeded", stage="Agent Recruitment & Governance", status="completed")
+    if upstream_degraded:
+        # Governance changes require a complete evidence set; defer HR rather
+        # than changing staffing based on a partial run.
+        hr_decision = {
+            "summary": "HR review deferred because one or more upstream roles did not complete.",
+            "manager_review": "none",
+            "actions": [],
+        }
+        hr_applied = []
+        hr_status = "deferred_due_to_degraded_cycle"
+    else:
+        if hr_output is None:
+            try:
+                hr_output = call_with_retries(
+                    lambda: generator(HR, hr_prompt), max_attempts=1,
+                    max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
+                )
+                checkpoint.record_stage("__hr_output__", hr_output)
+            except Exception as exc:
+                failure_policy = classify_failure(exc)
+                if not failure_policy["retryable"]:
+                    journal.record("stage_failed", stage="Agent Recruitment & Governance",
+                                   status="non_retryable_failure", error_type=type(exc).__name__)
+                    raise
+                category = failure_policy["category"]
+                failed_agents.append("Agent Recruitment & Governance")
+                upstream_degraded = True
+                hr_status = "unavailable"
+                hr_decision = {
+                    "summary": "HR review could not complete; no staffing changes were applied.",
+                    "manager_review": "none",
+                    "actions": [],
+                }
+                hr_applied = [f"HR review unavailable ({category}); retry on the next run."]
+                journal.record("stage_failed", stage="Agent Recruitment & Governance",
+                               status="isolated_failure", error_type=type(exc).__name__)
+        if hr_output is not None:
+            journal.record("stage_succeeded", stage="Agent Recruitment & Governance", status="completed")
+            hr_transaction = checkpoint.get_metadata("hr_transaction")
+            if (isinstance(hr_transaction, dict)
+                    and isinstance(hr_transaction.get("registry"), dict)
+                    and isinstance(hr_transaction.get("decision"), dict)
+                    and isinstance(hr_transaction.get("applied"), list)
+                    and hr_transaction.get("status") in {"valid", "rejected"}):
+                registry = normalize_team_registry(hr_transaction["registry"])
+                hr_decision = hr_transaction["decision"]
+                hr_applied = [item for item in hr_transaction["applied"] if isinstance(item, str)][:10]
+                hr_status = hr_transaction["status"]
+            else:
+                try:
+                    hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
+                    hr_status = "valid"
+                except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                    hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
+                                   "manager_review": "none", "actions": []}
+                    hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
+                    hr_status = "rejected"
+                checkpoint.set_metadata("hr_transaction", {
+                    "decision": hr_decision,
+                    "applied": hr_applied,
+                    "status": hr_status,
+                    "registry": registry,
+                    "team_fingerprint_after": hashlib.sha256(
+                        (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+                    ).hexdigest(),
+                })
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
 
-    # Persist the complete HR transaction before writing TEAM.json. If the
-    # workflow is interrupted between those writes, replay the saved result
-    # instead of applying the same staffing action twice.
-    hr_transaction = checkpoint.get_metadata("hr_transaction")
-    if (isinstance(hr_transaction, dict)
-            and isinstance(hr_transaction.get("registry"), dict)
-            and isinstance(hr_transaction.get("decision"), dict)
-            and isinstance(hr_transaction.get("applied"), list)
-            and hr_transaction.get("status") in {"valid", "rejected"}):
-        registry = normalize_team_registry(hr_transaction["registry"])
-        hr_decision = hr_transaction["decision"]
-        hr_applied = [item for item in hr_transaction["applied"] if isinstance(item, str)][:10]
-        hr_status = hr_transaction["status"]
-    else:
-        try:
-            hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
-            hr_status = "valid"
-        except (ValueError, TypeError, json.JSONDecodeError) as exc:
-            hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
-                           "manager_review": "none", "actions": []}
-            hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
-            hr_status = "rejected"
-        checkpoint.set_metadata("hr_transaction", {
-            "decision": hr_decision,
-            "applied": hr_applied,
-            "status": hr_status,
-            "registry": registry,
-            "team_fingerprint_after": hashlib.sha256(
-                (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            ).hexdigest(),
-        })
     outputs["Agent Recruitment & Governance"] = (
         "### HR decision\n" + str(hr_decision.get("summary", "No summary supplied."))
         + "\n\n### Manager review\n" + str(hr_decision.get("manager_review", "none"))
@@ -539,8 +624,8 @@ def run_cycle(request=None, generator=generate):
     )
     role_metrics["Agent Recruitment & Governance"] = {
         "duration_seconds": hr_duration,
-        "status": "success" if hr_status == "valid" else "rejected",
-        "output_characters": len(hr_output),
+        "status": hr_status,
+        "output_characters": len(hr_output) if isinstance(hr_output, str) else 0,
     }
     if hr_status == "valid" and (hr_applied or not TEAM_FILE.exists()):
         atomic_write_text(TEAM_FILE, json.dumps(registry, ensure_ascii=False, indent=2) + "\n")
@@ -571,6 +656,7 @@ def run_cycle(request=None, generator=generate):
         "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
         f"\nمراحل بازیابی‌شده از checkpoint: {len(resumed_stages)}",
         f"\nوضعیت پیشنهاد تغییر کد: {patch_proposal_status['status']} (تعداد فایل‌ها: {patch_proposal_status['changes']})",
+        f"\nنقش‌های نیازمند بازیابی: {', '.join(failed_agents) if failed_agents else 'هیچ‌کدام'}",
         f"\nمدل(های) تلاش‌شده: `{', '.join(models_attempted) or 'ثبت نشده'}`",
         f"\nمدل(های) پاسخ‌گوی موفق: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
@@ -584,12 +670,19 @@ def run_cycle(request=None, generator=generate):
         "request_snapshot": request[:5000],
         "request_fingerprint": request_fingerprint,
         "source_fingerprint": source_fingerprint,
-        "status": "planning_review_required",
+        "status": "completed_with_degraded_roles" if upstream_degraded else "planning_review_required",
+        "degraded_agents": failed_agents,
+        "recovery": ({
+            "status": "retry_available",
+            "last_successful_stage": next((name for name, _ in reversed(STAGES) if name in checkpoint.outputs), None),
+            "strategy": "checkpoint_resume",
+            "action_required": "Rerun Run Multi-Agent. Completed stages before the first failure are checkpointed; dependent stages will be regenerated.",
+        } if upstream_degraded else None),
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
         "resumed_agents": resumed_stages,
         "checkpoint_resumed_from_run_id": checkpoint.resumed_from_run_id,
-        "checkpoint_available": False,
+        "checkpoint_available": bool(upstream_degraded and checkpoint.outputs),
         "patch_proposal_status": patch_proposal_status,
         "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_proposal_status["status"] == "validated" else None,
         "role_metrics": role_metrics,
@@ -604,11 +697,14 @@ def run_cycle(request=None, generator=generate):
         "unit_test_methods": unit_test_methods,
         "github_run_id": __import__("os").getenv("GITHUB_RUN_ID"),
         "github_sha": __import__("os").getenv("GITHUB_SHA"),
-        "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",
+        "next_step": ("Rerun Run Multi-Agent to recover unavailable roles; do not authorize code changes from a degraded run."
+                      if upstream_degraded else
+                      "Review the report, approve decisions, update REQUEST.md, then run again."),
     }
     atomic_write_text(STATE_FILE, json.dumps(new_state, ensure_ascii=False, indent=2) + "\n")
     lifecycle.transition("completed")
-    checkpoint.clear()
+    if not upstream_degraded:
+        checkpoint.clear()
     return outputs
 
 

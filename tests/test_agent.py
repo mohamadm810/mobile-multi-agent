@@ -677,7 +677,7 @@ class IndependentProviderSafetyTests(unittest.TestCase):
             {"type": "image", "image_url": {}},
             {"type": "text", "text": "second"},
         ]}}]})
-        self.assertEqual(result, "first\\nsecond")
+        self.assertEqual(result, "first\nsecond")
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-secret", "OPENAI_API_KEY": "openai-secret"})
     def test_main_redacts_both_provider_keys_before_logging_or_persisting(self):

@@ -134,6 +134,7 @@ class GeminiResponseTests(unittest.TestCase):
             gemini.USED_MODELS.clear()
             gemini.ATTEMPTED_MODELS.clear()
             self.assertEqual(generate("role", "prompt"), "third model ok")
+            self.assertEqual(gemini.ACTIVE_MODEL, "fallback-two")
 
         self.assertEqual(mocked_urlopen.call_count, 7)
         self.assertEqual(
@@ -141,7 +142,6 @@ class GeminiResponseTests(unittest.TestCase):
             ["primary-model", "fallback-one", "fallback-two"],
         )
         self.assertEqual(gemini.USED_MODELS, ["fallback-two"])
-        self.assertEqual(gemini.ACTIVE_MODEL, "fallback-two")
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
     @patch("agent.gemini.time.sleep")

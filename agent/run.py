@@ -112,6 +112,7 @@ def run_cycle(request=None, generator=generate):
         "Do not call implemented code proposed, and do not claim unimplemented behavior exists. "
         "Distinguish source-level implementation, unit-test simulation, and behavior observed in this live run."
     )
+    unit_test_methods = get_unit_test_inventory()
     outputs = {}
     prior_for_stage = {
         "Requirements Analyst": [],
@@ -151,7 +152,6 @@ def run_cycle(request=None, generator=generate):
     now = datetime.now(timezone.utc).isoformat()
     models_used = list(USED_MODELS)
     models_attempted = list(ATTEMPTED_MODELS)
-    unit_test_methods = get_unit_test_inventory()
     report = [
         "# گزارش اجرای تیم ایجنت",
         f"\nزمان اجرا (UTC): `{now}`",

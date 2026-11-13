@@ -37,9 +37,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add workspace/REPORT.md workspace/STATE.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Update multi-agent planning report"
-            git push
-          else
+          if git diff --cached --quiet; then
             echo "No report changes"
+            exit 0
           fi
+          git commit -m "Update multi-agent planning report"
+
+          # Rebase generated output onto the latest main before pushing.
+          # Prefer this run's generated REPORT/STATE if another run updated them too.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git rebase -X theirs origin/main
+            if git push origin HEAD:main; then
+              echo "Report and state committed to main"
+              exit 0
+            fi
+            echo "Push race on attempt $attempt; retrying after fetch/rebase"
+          done
+          echo "Could not publish report after three attempts"
+          exit 1

@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
-from .resilience import CheckpointStore, call_with_retries
+from .resilience import CheckpointStore, CircuitBreaker, call_with_retries
 from .patch_spec import PatchSpecError, validate_patch_spec, patch_proposal_fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -363,11 +363,20 @@ def run_cycle(request=None, generator=generate):
     )
     request_fingerprint = hashlib.sha256(request.encode("utf-8")).hexdigest()
     source_fingerprint = repository_fingerprint()
+    try:
+        team_bytes = TEAM_FILE.read_bytes() if TEAM_FILE.is_file() else b""
+    except OSError:
+        team_bytes = b""
+    team_fingerprint = hashlib.sha256(team_bytes).hexdigest()
+    run_id = os.getenv("GITHUB_RUN_ID") or "local"
     checkpoint = CheckpointStore(
         WORKSPACE / "CHECKPOINT.json",
         request_fingerprint,
         source_fingerprint,
+        run_id=run_id,
+        team_fingerprint=team_fingerprint,
     )
+    dependency_breaker = CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
     outputs = {
         key: value for key, value in checkpoint.outputs.items()
         if key != "__hr_output__"
@@ -417,7 +426,10 @@ def run_cycle(request=None, generator=generate):
             + runtime_evidence
         )
         started = __import__("time").perf_counter()
-        outputs[name] = call_with_retries(lambda: generator(role, prompt))
+        outputs[name] = call_with_retries(
+            lambda: generator(role, prompt), max_attempts=3,
+            max_elapsed_seconds=180.0, circuit_breaker=dependency_breaker,
+        )
         checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
@@ -437,7 +449,10 @@ def run_cycle(request=None, generator=generate):
             + "\n\nPRIOR TEAM OUTPUTS:\n"
             + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
         )
-        outputs[name] = call_with_retries(lambda: generator(custom["prompt"], custom_prompt))
+        outputs[name] = call_with_retries(
+            lambda: generator(custom["prompt"], custom_prompt), max_attempts=3,
+            max_elapsed_seconds=180.0, circuit_breaker=dependency_breaker,
+        )
         checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
@@ -464,7 +479,10 @@ def run_cycle(request=None, generator=generate):
     hr_started = __import__("time").perf_counter()
     hr_output = checkpoint.get_stage("__hr_output__")
     if hr_output is None:
-        hr_output = call_with_retries(lambda: generator(HR, hr_prompt))
+        hr_output = call_with_retries(
+            lambda: generator(HR, hr_prompt), max_attempts=3,
+            max_elapsed_seconds=180.0, circuit_breaker=dependency_breaker,
+        )
         checkpoint.record_stage("__hr_output__", hr_output)
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
 
@@ -587,10 +605,16 @@ def write_failure_state(error):
     checkpoint_valid = False
     try:
         current_request = read_request()
+        try:
+            team_bytes = TEAM_FILE.read_bytes() if TEAM_FILE.is_file() else b""
+        except OSError:
+            team_bytes = b""
         checkpoint = CheckpointStore(
             checkpoint_path,
             hashlib.sha256(current_request.encode("utf-8")).hexdigest(),
             repository_fingerprint(),
+            run_id=os.getenv("GITHUB_RUN_ID") or "local",
+            team_fingerprint=hashlib.sha256(team_bytes).hexdigest(),
         )
         completed = [name for name in checkpoint.outputs if name != "__hr_output__"]
         checkpoint_valid = checkpoint_path.is_file() and bool(checkpoint.outputs or checkpoint.metadata)
@@ -609,15 +633,23 @@ def write_failure_state(error):
             proposal_path.unlink(missing_ok=True)
         except OSError:
             pass
+    recovery_status = "paused_recovery_required" if checkpoint_valid else "failed"
     state.update({
-        "status": "failed",
+        "status": recovery_status,
         "completed_agents": completed,
         "checkpoint_available": checkpoint_valid,
         "patch_proposal_status": patch_status,
         "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_status["status"] == "validated" else None,
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
         "last_error": str(error)[:1500],
-        "next_step": "Start a new workflow_dispatch run on main; matching request/source checkpoints will resume completed stages automatically.",
+        "recovery": {
+            "status": recovery_status,
+            "last_successful_stage": completed[-1] if completed else None,
+            "checkpoint_run_id": os.getenv("GITHUB_RUN_ID") or "local",
+            "action_required": "Inspect the error, then rerun workflow_dispatch on main. Only checkpoints matching request, source, team registry, run ID, and integrity checksum will resume."
+                if checkpoint_valid else "No valid checkpoint is available; inspect the error before starting a fresh run.",
+        },
+        "next_step": "Inspect workspace/STATE.json and workspace/REPORT.md. If recovery is paused, rerun workflow_dispatch on main; matching checkpoints resume completed stages automatically.",
     })
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 

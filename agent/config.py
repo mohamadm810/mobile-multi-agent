@@ -1,10 +1,10 @@
 import os
 import re
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 FALLBACK_MODELS = [
     item.strip()
-    for item in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
+    for item in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash").split(",")
     if item.strip()
 ]
 for model_name in [MODEL, *FALLBACK_MODELS]:

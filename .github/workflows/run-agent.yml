@@ -1,0 +1,42 @@
+name: Run Multi-Agent
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "workspace/REQUEST.md"
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: multi-agent-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run-agents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run seven-agent planning cycle
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          GEMINI_TIMEOUT_SECONDS: "90"
+        run: python -m agent.run
+      - name: Commit report and state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add workspace/REPORT.md workspace/STATE.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update multi-agent planning report"
+            git push
+          else
+            echo "No report changes"
+          fi

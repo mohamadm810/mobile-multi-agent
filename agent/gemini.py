@@ -14,7 +14,16 @@ from .config import (
 
 
 class AgentError(RuntimeError):
-    pass
+    def __init__(self, message, *, retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def reset_run_tracking():
+    """Reset per-cycle metadata while preserving fallback selection within a cycle."""
+    global ACTIVE_MODEL
+    ACTIVE_MODEL = MODEL
+    USED_MODELS.clear()
 
 
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
@@ -75,11 +84,25 @@ def _generate_with_model(model, payload, key):
                 time.sleep(delay)
                 continue
             detail = exc.read(1500).decode("utf-8", errors="replace")
-            raise AgentError(f"Gemini API HTTP {exc.code} on {model}: {detail}") from None
+            raise AgentError(
+                f"Gemini API HTTP {exc.code} on {model}: {detail}",
+                retryable=exc.code in RETRYABLE_HTTP_CODES,
+            ) from None
         except AgentError:
             raise
-        except (urllib.error.URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise AgentError(f"Gemini API request failed on {model}: {type(exc).__name__}: {exc}") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            if attempt < MAX_ATTEMPTS_PER_MODEL - 1:
+                time.sleep(_retry_delay(None, attempt + 1))
+                continue
+            raise AgentError(
+                f"Gemini transport failed on {model} after {MAX_ATTEMPTS_PER_MODEL} attempts: "
+                f"{type(exc).__name__}: {exc}",
+                retryable=True,
+            ) from None
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise AgentError(
+                f"Gemini returned an invalid response on {model}: {type(exc).__name__}"
+            ) from None
     raise AgentError(f"Gemini API request failed on {model} after retries.")
 
 
@@ -109,7 +132,7 @@ def generate(role: str, prompt: str) -> str:
                 USED_MODELS.append(model)
             return result
         except AgentError as exc:
-            if index < len(models) - 1 and any(f"HTTP {code}" in str(exc) for code in RETRYABLE_HTTP_CODES):
+            if index < len(models) - 1 and exc.retryable:
                 continue
             raise
     raise AgentError("All configured Gemini models failed.")

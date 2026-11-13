@@ -613,6 +613,43 @@ def run_cycle(request=None, generator=generate):
 
 
 
+def classify_failure(error):
+    """Map failures to safe, actionable recovery policies without retrying security gates."""
+    message = str(error).lower()
+    error_name = type(error).__name__ if isinstance(error, BaseException) else "RunError"
+    if isinstance(error, PatchSpecError) or any(term in message for term in (
+        "path violation", "path traversal", "security validation", "permission denied",
+        "unauthorized", "forbidden", "http 401", "http 403", "approval required",
+    )):
+        return {"category": "security_or_permission", "retryable": False,
+                "strategy": "human_review", "action": "Do not retry or use a fallback to bypass this control. Review the permission or validation failure, correct it explicitly, then start a new authorized run."}
+    if any(term in message for term in ("git conflict", "merge conflict", "non-fast-forward", "rebase conflict")):
+        return {"category": "git_conflict", "retryable": False,
+                "strategy": "manual_reconciliation", "action": "Do not rerun blindly. Reconcile the branch against the current main, inspect the diff, then rerun from a verified checkpoint."}
+    if any(term in message for term in ("missing gemini_api_key", "invalid api key", "credential", "configuration error")):
+        return {"category": "configuration", "retryable": False,
+                "strategy": "configuration_repair", "action": "Check repository secret names and model configuration. Do not repeat the run until configuration is corrected."}
+    retryable = (
+        isinstance(error, TimeoutError)
+        or bool(getattr(error, "retryable", False))
+        or any(term in message for term in (
+            "http 429", "http 500", "http 502", "http 503", "http 504",
+            "timeout", "timed out", "temporary network", "transport failed",
+            "connection reset", "temporarily unavailable",
+        ))
+    )
+    if retryable:
+        return {"category": "transient_dependency", "retryable": True,
+                "strategy": "checkpoint_resume", "action": "Wait for the provider or network to recover, then rerun the workflow. A valid checkpoint will skip completed stages and retry the interrupted stage."}
+    if isinstance(error, (ValueError, TypeError)) or any(term in message for term in (
+        "invalid request", "request is empty", "exceeds the configured size",
+    )):
+        return {"category": "input_or_validation", "retryable": False,
+                "strategy": "correct_input", "action": "Correct the request or invalid input first. Do not repeat the same run unchanged."}
+    return {"category": "unknown", "retryable": False,
+            "strategy": "diagnose_before_retry", "action": "Inspect the sanitized error and checkpoint. Do not automatically retry until the failure cause is understood."}
+
+
 def write_failure_state(error):
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     state = read_state()
@@ -652,7 +689,12 @@ def write_failure_state(error):
         except OSError:
             pass
     recovery_status = "paused_recovery_required" if checkpoint_valid else "failed"
+    failure_policy = classify_failure(error)
+    recovery_action = failure_policy["action"]
+    if checkpoint_valid and failure_policy["retryable"]:
+        recovery_action = "Wait for the transient dependency to recover, then rerun workflow_dispatch on main. The validated checkpoint will resume completed stages."
     state.update({
+        "failure_classification": failure_policy,
         "status": recovery_status,
         "completed_agents": completed,
         "checkpoint_available": checkpoint_valid,
@@ -664,10 +706,11 @@ def write_failure_state(error):
             "status": recovery_status,
             "last_successful_stage": completed[-1] if completed else None,
             "checkpoint_run_id": os.getenv("GITHUB_RUN_ID") or "local",
-            "action_required": "Inspect the error, then rerun workflow_dispatch on main. Only checkpoints matching request, source, team registry, and integrity checksum will resume."
-                if checkpoint_valid else "No valid checkpoint is available; inspect the error before starting a fresh run.",
+            "action_required": recovery_action,
+            "strategy": failure_policy["strategy"],
+            "category": failure_policy["category"],
         },
-        "next_step": "Inspect workspace/STATE.json and workspace/REPORT.md. If recovery is paused, rerun workflow_dispatch on main; matching checkpoints resume completed stages automatically.",
+        "next_step": recovery_action,
     })
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
     try:

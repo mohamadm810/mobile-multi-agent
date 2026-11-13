@@ -408,5 +408,41 @@ class RunLedgerTests(unittest.TestCase):
             self.assertEqual(events[-1]["status"], "completed")
 
 
+
+
+
+class FailureClassificationTests(unittest.TestCase):
+    def test_transient_provider_failure_recommends_checkpoint_resume(self):
+        from agent.run import classify_failure
+        class RetryableProviderError(RuntimeError):
+            retryable = True
+        result = classify_failure(RetryableProviderError("temporary provider outage"))
+        self.assertEqual(result["category"], "transient_dependency")
+        self.assertTrue(result["retryable"])
+        self.assertEqual(result["strategy"], "checkpoint_resume")
+
+    def test_security_and_permission_failures_never_recommend_retry(self):
+        from agent.run import classify_failure
+        for message in ("HTTP 403 forbidden", "path violation", "approval required"):
+            with self.subTest(message=message):
+                result = classify_failure(RuntimeError(message))
+                self.assertEqual(result["category"], "security_or_permission")
+                self.assertFalse(result["retryable"])
+                self.assertEqual(result["strategy"], "human_review")
+
+    def test_git_conflict_requires_manual_reconciliation(self):
+        from agent.run import classify_failure
+        result = classify_failure(RuntimeError("Git conflict: non-fast-forward"))
+        self.assertEqual(result["category"], "git_conflict")
+        self.assertFalse(result["retryable"])
+        self.assertEqual(result["strategy"], "manual_reconciliation")
+
+    def test_unknown_failure_does_not_auto_retry(self):
+        from agent.run import classify_failure
+        result = classify_failure(RuntimeError("unexpected parser invariant"))
+        self.assertEqual(result["category"], "unknown")
+        self.assertFalse(result["retryable"])
+
+
 if __name__ == "__main__":
     unittest.main()

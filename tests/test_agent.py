@@ -71,9 +71,11 @@ class GeminiResponseTests(unittest.TestCase):
     def test_reset_run_tracking_clears_models_and_restores_primary(self):
         import agent.gemini as gemini
         gemini.USED_MODELS.append("fallback-model")
+        gemini.ATTEMPTED_MODELS.append("primary-model")
         gemini.ACTIVE_MODEL = "fallback-model"
         reset_run_tracking()
         self.assertEqual(gemini.USED_MODELS, [])
+        self.assertEqual(gemini.ATTEMPTED_MODELS, [])
         self.assertEqual(gemini.ACTIVE_MODEL, gemini.MODEL)
 
 

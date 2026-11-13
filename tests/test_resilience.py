@@ -345,5 +345,68 @@ class CheckpointTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
 
+
+
+class RunLedgerTests(unittest.TestCase):
+    def test_state_machine_rejects_invalid_and_terminal_transitions(self):
+        from agent.resilience import RunEventJournal, RunStateMachine
+        with tempfile.TemporaryDirectory() as directory:
+            machine = RunStateMachine(RunEventJournal(Path(directory) / "EVENTS.jsonl", "run-1"))
+            self.assertEqual(machine.transition("running"), "running")
+            self.assertEqual(machine.transition("recovering"), "recovering")
+            self.assertEqual(machine.transition("running"), "running")
+            self.assertEqual(machine.transition("completed"), "completed")
+            with self.assertRaisesRegex(ValueError, "Invalid run state transition"):
+                machine.transition("running")
+
+    def test_journal_is_bounded_and_stores_only_allowlisted_metadata(self):
+        from agent.resilience import MAX_JOURNAL_EVENTS, RunEventJournal
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "EVENTS.jsonl"
+            journal = RunEventJournal(path, "run-2")
+            for index in range(MAX_JOURNAL_EVENTS + 20):
+                journal.record("stage_succeeded", stage=f"stage-{index}", status="completed")
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.assertLessEqual(len(lines), MAX_JOURNAL_EVENTS)
+            events = [json.loads(line) for line in lines]
+            self.assertTrue(all(set(item) == {"schema", "run_id", "sequence", "timestamp",
+                "event", "stage", "status", "error_type"} for item in events))
+            self.assertEqual(events[-1]["stage"], f"stage-{MAX_JOURNAL_EVENTS + 19}")
+            with self.assertRaisesRegex(ValueError, "Unsupported"):
+                journal.record("raw_error_message", status="do-not-log")
+
+    def test_journal_rejects_free_form_error_text(self):
+        from agent.resilience import RunEventJournal
+        with tempfile.TemporaryDirectory() as directory:
+            journal = RunEventJournal(Path(directory) / "EVENTS.jsonl", "run-3")
+            with self.assertRaisesRegex(ValueError, "error type"):
+                journal.record("run_failed", error_type="token=super-secret")
+            self.assertFalse(journal.path.exists())
+
+
+
+
+    def test_run_cycle_persists_stage_lifecycle_events(self):
+        from unittest.mock import patch
+        from agent.run import run_cycle
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("agent.run.WORKSPACE", root), \
+                 patch("agent.run.STATE_FILE", root / "STATE.json"), \
+                 patch("agent.run.REPORT_FILE", root / "REPORT.md"), \
+                 patch("agent.run.TEAM_FILE", root / "TEAM.json"), \
+                 patch("agent.run.read_state", return_value={"status": "not_started"}), \
+                 patch("agent.run.read_repository_context", return_value="source evidence"):
+                def generator(role, prompt):
+                    if role == __import__("agent.roles", fromlist=["HR"]).HR:
+                        return json.dumps({"summary": "complete", "manager_review": "none", "actions": []})
+                    return "completed"
+                run_cycle("ledger integration request", generator=generator)
+            events = [json.loads(line) for line in (root / "EVENTS.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertTrue(any(item["event"] == "stage_started" for item in events))
+            self.assertTrue(any(item["event"] == "stage_succeeded" for item in events))
+            self.assertEqual(events[-1]["status"], "completed")
+
+
 if __name__ == "__main__":
     unittest.main()

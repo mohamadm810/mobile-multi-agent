@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -261,3 +262,89 @@ class CheckpointStore:
         self.metadata = {}
         self.stage_records = {}
         self.path.unlink(missing_ok=True)
+
+
+MAX_JOURNAL_EVENTS = 500
+MAX_JOURNAL_BYTES = 200_000
+JOURNAL_EVENT_TYPES = {"state_transition", "run_resumed", "stage_started", "stage_succeeded", "run_paused", "run_failed"}
+
+
+class RunEventJournal:
+    """Bounded, atomically-written execution history; stores metadata, never free-form secrets."""
+    def __init__(self, path, run_id, *, clock=None):
+        self.path = Path(path)
+        self.run_id = str(run_id or "local")[:100]
+        self.clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
+
+    def _read_events(self):
+        try:
+            if not self.path.is_file() or self.path.stat().st_size > MAX_JOURNAL_BYTES:
+                return []
+            raw = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return []
+        events = []
+        for line in raw.splitlines():
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict) and item.get("schema") == 1 and isinstance(item.get("event"), str):
+                events.append(item)
+        return events[-MAX_JOURNAL_EVENTS:]
+
+    def record(self, event, *, stage=None, status=None, error_type=None):
+        if event not in JOURNAL_EVENT_TYPES:
+            raise ValueError("Unsupported execution journal event.")
+        if stage is not None and (not isinstance(stage, str) or not 1 <= len(stage) <= 100):
+            raise ValueError("Invalid journal stage.")
+        if status is not None and (not isinstance(status, str) or not 1 <= len(status) <= 40):
+            raise ValueError("Invalid journal status.")
+        if error_type is not None and (not isinstance(error_type, str)
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,79}", error_type)):
+            raise ValueError("Invalid journal error type.")
+        events = self._read_events()
+        events.append({"schema": 1, "run_id": self.run_id,
+            "sequence": (events[-1].get("sequence", 0) + 1) if events else 1,
+            "timestamp": self.clock(), "event": event, "stage": stage,
+            "status": status, "error_type": error_type})
+        events = events[-MAX_JOURNAL_EVENTS:]
+        encoded = "".join(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n" for item in events)
+        if len(encoded.encode("utf-8")) > MAX_JOURNAL_BYTES:
+            events = events[-max(1, MAX_JOURNAL_EVENTS // 2):]
+            encoded = "".join(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n" for item in events)
+        temporary = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
+                    prefix=f".{self.path.name}.", suffix=".tmp", delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
+class RunStateMachine:
+    """Enforce explicit lifecycle transitions; terminal states cannot silently resume."""
+    TRANSITIONS = {
+        "queued": {"running", "failed"},
+        "running": {"retrying", "recovering", "paused_recovery_required", "completed", "failed"},
+        "retrying": {"running", "recovering", "paused_recovery_required", "failed"},
+        "recovering": {"running", "paused_recovery_required", "completed", "failed"},
+        "paused_recovery_required": set(), "completed": set(), "failed": set(),
+    }
+    def __init__(self, journal, initial="queued"):
+        if initial not in self.TRANSITIONS:
+            raise ValueError("Unknown run state.")
+        self.journal, self.state = journal, initial
+    def transition(self, next_state):
+        if next_state not in self.TRANSITIONS[self.state]:
+            raise ValueError(f"Invalid run state transition: {self.state} -> {next_state}.")
+        self.journal.record("state_transition", status=next_state)
+        self.state = next_state
+        return self.state

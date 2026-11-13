@@ -113,6 +113,12 @@ def run_cycle(request=None, generator=generate):
         "Distinguish source-level implementation, unit-test simulation, and behavior observed in this live run."
     )
     unit_test_methods = get_unit_test_inventory()
+    context += (
+        "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
+        + str(len(unit_test_methods)) + " unittest methods are present in tests/test_agent.py. "
+        + "Names: " + ", ".join(unit_test_methods) + ". "
+        + "Use this exact count and list; do not estimate, omit tests, or claim the test file is absent."
+    )
     outputs = {}
     prior_for_stage = {
         "Requirements Analyst": [],

@@ -86,10 +86,27 @@ def run_cycle(request=None, generator=generate):
     return outputs
 
 
+
+def write_failure_state(error):
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    state = read_state()
+    state.update({
+        "status": "failed",
+        "last_run_utc": datetime.now(timezone.utc).isoformat(),
+        "last_error": str(error)[:1500],
+        "next_step": "Review the Actions log, resolve the reported issue, then rerun the workflow.",
+    })
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def main():
     try:
         run_cycle()
     except AgentError as exc:
+        try:
+            write_failure_state(exc)
+        except OSError as state_error:
+            print(f"Could not persist failure state: {state_error}", file=sys.stderr)
         print(f"Agent run failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
     print("Agent run completed. Review workspace/REPORT.md.")

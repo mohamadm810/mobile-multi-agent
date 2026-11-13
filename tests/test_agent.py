@@ -6,7 +6,7 @@ from pathlib import Path
 import urllib.error
 from unittest.mock import patch, MagicMock
 
-from agent.gemini import AgentError, _extract_text, generate
+from agent.gemini import AgentError, _extract_text, generate, reset_run_tracking
 
 
 class GeminiResponseTests(unittest.TestCase):
@@ -50,6 +50,31 @@ class GeminiResponseTests(unittest.TestCase):
             self.assertEqual(generate("role", "prompt"), "second ok")
         self.assertEqual(mocked_urlopen.call_count, 5)
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_transport_errors_retry_then_use_fallback(self, mocked_urlopen, _sleep):
+        failures = [urllib.error.URLError("temporary network failure") for _ in range(3)]
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "network fallback ok"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [*failures, success]
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            self.assertEqual(generate("role", "prompt"), "network fallback ok")
+        self.assertEqual(mocked_urlopen.call_count, 4)
+        self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
+
+    def test_reset_run_tracking_clears_models_and_restores_primary(self):
+        import agent.gemini as gemini
+        gemini.USED_MODELS.append("fallback-model")
+        gemini.ACTIVE_MODEL = "fallback-model"
+        reset_run_tracking()
+        self.assertEqual(gemini.USED_MODELS, [])
+        self.assertEqual(gemini.ACTIVE_MODEL, gemini.MODEL)
 
 
 class FailureStateTests(unittest.TestCase):

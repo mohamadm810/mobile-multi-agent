@@ -62,12 +62,13 @@ REPOSITORY_EVIDENCE_FILES = [
     "agent/apply_proposal.py",
     ".github/workflows/run-agent.yml",
     ".github/workflows/apply-proposal.yml",
+    ".github/workflows/tests.yml",
     "tests/test_agent.py",
     "tests/test_resilience.py",
     "tests/test_patcher.py",
     "agent/run.py",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 105000
+MAX_REPOSITORY_CONTEXT_CHARS = 120000
 
 
 def read_repository_context():
@@ -129,17 +130,21 @@ def repository_fingerprint():
 
 
 def get_unit_test_inventory():
-    """Return exact unittest method names found in the checked-in test source."""
-    test_file = ROOT / "tests" / "test_agent.py"
-    try:
-        tree = ast.parse(test_file.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeError):
-        return []
+    """Return exact test method identifiers across every Python test file."""
+    test_root = ROOT / "tests"
     names = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-            names.append(node.name)
-    return sorted(set(names))
+    if not test_root.is_dir():
+        return names
+    for test_file in sorted(test_root.rglob("test*.py")):
+        try:
+            tree = ast.parse(test_file.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+        relative = test_file.relative_to(ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+                names.append(f"{relative}:{node.name}")
+    return sorted(names)
 
 
 def atomic_write_text(path, content):
@@ -348,7 +353,7 @@ def run_cycle(request=None, generator=generate):
     unit_test_methods = get_unit_test_inventory()
     context += (
         "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
-        + str(len(unit_test_methods)) + " unittest methods are present in tests/test_agent.py. "
+        + str(len(unit_test_methods)) + " unittest methods are present across Python files under tests/. "
         + "Names: " + ", ".join(unit_test_methods) + ". "
         + "Use this exact count and list; do not estimate, omit tests, or claim the test file is absent."
     )

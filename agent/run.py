@@ -12,7 +12,7 @@ from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
 from .resilience import CheckpointStore, call_with_retries
-from .patch_spec import PatchSpecError, validate_patch_spec
+from .patch_spec import PatchSpecError, validate_patch_spec, patch_proposal_fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace"
@@ -109,7 +109,11 @@ def persist_patch_proposal(developer_output, proposal_path):
         proposal_path.unlink(missing_ok=True)
         return {"status": "rejected", "changes": 0, "reason": str(exc)[:300]}
     atomic_write_text(proposal_path, json.dumps(validated, ensure_ascii=False, indent=2) + "\n")
-    return {"status": "validated", "changes": len(validated["changes"])}
+    return {
+        "status": "validated",
+        "changes": len(validated["changes"]),
+        "proposal_fingerprint": patch_proposal_fingerprint(validated),
+    }
 
 def repository_fingerprint():
     """Hash source evidence so checkpoints never cross code revisions."""
@@ -357,10 +361,12 @@ def run_cycle(request=None, generator=generate):
         + "Names: " + ", ".join(unit_test_methods) + ". "
         + "Use this exact count and list; do not estimate, omit tests, or claim test files are absent."
     )
+    request_fingerprint = hashlib.sha256(request.encode("utf-8")).hexdigest()
+    source_fingerprint = repository_fingerprint()
     checkpoint = CheckpointStore(
         WORKSPACE / "CHECKPOINT.json",
-        hashlib.sha256(request.encode("utf-8")).hexdigest(),
-        repository_fingerprint(),
+        request_fingerprint,
+        source_fingerprint,
     )
     outputs = {
         key: value for key, value in checkpoint.outputs.items()
@@ -542,6 +548,8 @@ def run_cycle(request=None, generator=generate):
     new_state = {
         "last_run_utc": now,
         "request_snapshot": request[:5000],
+        "request_fingerprint": request_fingerprint,
+        "source_fingerprint": source_fingerprint,
         "status": "planning_review_required",
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),

@@ -650,7 +650,18 @@ def classify_failure(error):
             "strategy": "diagnose_before_retry", "action": "Inspect the sanitized error and checkpoint. Do not automatically retry until the failure cause is understood."}
 
 
+def redact_secrets(message):
+    """Redact configured provider credentials before any error is persisted or printed."""
+    safe_message = str(message)
+    for secret_name in ("GEMINI_API_KEY", "OPENAI_API_KEY"):
+        secret_value = os.getenv(secret_name, "").strip()
+        if secret_value:
+            safe_message = safe_message.replace(secret_value, "[REDACTED]")
+    return safe_message
+
+
 def write_failure_state(error):
+    safe_error = redact_secrets(error)
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     state = read_state()
     checkpoint_path = WORKSPACE / "CHECKPOINT.json"
@@ -701,7 +712,7 @@ def write_failure_state(error):
         "patch_proposal_status": patch_status,
         "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_status["status"] == "validated" else None,
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
-        "last_error": str(error)[:1500],
+        "last_error": safe_error[:1500],
         "recovery": {
             "status": recovery_status,
             "last_successful_stage": completed[-1] if completed else None,
@@ -726,12 +737,7 @@ def main():
     try:
         run_cycle()
     except Exception as exc:
-        safe_message = str(exc)
-        for secret_name in ("GEMINI_API_KEY", "OPENAI_API_KEY"):
-            secret_value = os.getenv(secret_name, "").strip()
-            if secret_value:
-                safe_message = safe_message.replace(secret_value, "[REDACTED]")
-        safe_error = f"{type(exc).__name__}: {safe_message}"
+        safe_error = f"{type(exc).__name__}: {redact_secrets(exc)}"
         try:
             write_failure_state(safe_error)
         except OSError as state_error:

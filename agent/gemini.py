@@ -24,11 +24,13 @@ def reset_run_tracking():
     global ACTIVE_MODEL
     ACTIVE_MODEL = MODEL
     USED_MODELS.clear()
+    ATTEMPTED_MODELS.clear()
 
 
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS_PER_MODEL = 3
 USED_MODELS = []
+ATTEMPTED_MODELS = []
 ACTIVE_MODEL = MODEL
 
 
@@ -125,6 +127,8 @@ def generate(role: str, prompt: str) -> str:
     global ACTIVE_MODEL
     models = list(dict.fromkeys([ACTIVE_MODEL, *FALLBACK_MODELS]))
     for index, model in enumerate(models):
+        if model not in ATTEMPTED_MODELS:
+            ATTEMPTED_MODELS.append(model)
         try:
             result = _generate_with_model(model, payload, key)
             ACTIVE_MODEL = model

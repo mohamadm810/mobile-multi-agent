@@ -1,9 +1,8 @@
 import json
 import os
-import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import patch, MagicMock
 
 from agent.gemini import AgentError, _extract_text, generate
 
@@ -27,6 +26,24 @@ class GeminiResponseTests(unittest.TestCase):
     def test_missing_key_fails_before_network(self):
         with self.assertRaisesRegex(AgentError, "Missing GEMINI_API_KEY"):
             generate("role", "prompt")
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_uses_fallback_model_after_primary_503(self, mocked_urlopen, _sleep):
+        error1 = urllib.error.HTTPError("https://example.invalid", 503, "busy", {}, None)
+        error2 = urllib.error.HTTPError("https://example.invalid", 503, "busy", {}, None)
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "fallback ok"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [error1, error2, success]
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.FALLBACK_MODELS", ["fallback-model"]
+        ):
+            self.assertEqual(generate("role", "prompt"), "fallback ok")
+        self.assertEqual(mocked_urlopen.call_count, 3)
+        self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
 
 class RequestValidationTests(unittest.TestCase):

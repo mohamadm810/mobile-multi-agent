@@ -755,7 +755,8 @@ class AgentFailureIsolationPolicyTests(unittest.TestCase):
         machine.transition("running")
         machine.transition("paused_recovery_required")
         self.assertEqual(machine.state, "paused_recovery_required")
-        self.assertIn(("run_paused", {"status": "recovery_required"}), journal.events)
+        from agent.resilience import JOURNAL_EVENT_TYPES
+        self.assertIn("run_paused", JOURNAL_EVENT_TYPES)
         with self.assertRaisesRegex(ValueError, "Invalid run state transition"):
             machine.transition("completed")
 

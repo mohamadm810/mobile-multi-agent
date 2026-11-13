@@ -142,7 +142,7 @@ class ProposalFreshnessTests(unittest.TestCase):
 
     def test_rejects_proposal_tampering(self):
         altered = proposal()
-        altered["changes"][0]["unified_diff"] = "\\n".join([
+        altered["changes"][0]["unified_diff"] = "\n".join([
             "--- a/agent/example.py",
             "+++ b/agent/example.py",
             "@@ -1 +1 @@",

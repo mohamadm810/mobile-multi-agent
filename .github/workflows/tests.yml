@@ -50,3 +50,22 @@ jobs:
             --env HOME=/tmp \
             python:3.12-slim \
             python -c "from pathlib import Path; import subprocess, sys; files=list(Path('agent').rglob('*.py'))+list(Path('tests').rglob('*.py')); [compile(p.read_text(encoding='utf-8'), str(p), 'exec') for p in files]; result=subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], check=False); sys.exit(result.returncode)"
+      - name: Build clean source package
+        if: success()
+        run: |
+          mkdir -p dist
+          git archive --format=zip --prefix=mobile_multi_agent/ HEAD \
+            .github/workflows agent tests README.md README_FA.md LICENSE .gitignore \
+            workspace/REQUEST_TEMPLATE.md workspace/TEAM.json \
+            -o dist/mobile_multi_agent.zip
+          sha256sum dist/mobile_multi_agent.zip > dist/SHA256SUMS.txt
+      - name: Upload verified source package
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobile-multi-agent-source
+          path: |
+            dist/mobile_multi_agent.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

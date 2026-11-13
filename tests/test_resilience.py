@@ -41,6 +41,15 @@ class RetryTests(unittest.TestCase):
 
 
 class CheckpointTests(unittest.TestCase):
+
+    def test_test_inventory_includes_all_test_files(self):
+        from agent.run import get_unit_test_inventory
+
+        inventory = get_unit_test_inventory()
+        self.assertTrue(any(name.startswith("tests/test_agent.py:") for name in inventory))
+        self.assertTrue(any(name.startswith("tests/test_resilience.py:") for name in inventory))
+        self.assertTrue(any(name.startswith("tests/test_patcher.py:") for name in inventory))
+
     def test_checkpoint_round_trip_and_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CHECKPOINT.json"

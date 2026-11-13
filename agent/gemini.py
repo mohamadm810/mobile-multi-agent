@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import random
 import time
 import urllib.error
 import urllib.request
@@ -58,13 +59,17 @@ def _extract_text(data):
 
 
 def _retry_delay(error, attempt):
+    """Return a jittered delay; None means Retry-After exceeds the safe wait budget."""
     retry_after = error.headers.get("Retry-After") if error is not None and error.headers else None
     if retry_after:
         try:
-            return min(30.0, max(1.0, float(retry_after)))
+            delay = float(retry_after)
         except (TypeError, ValueError):
-            pass
-    return min(20.0, 2.0 ** attempt)
+            delay = None
+        if delay is not None and delay >= 0:
+            return delay if delay <= 30.0 else None
+    base = min(20.0, 2.0 ** max(0, attempt - 1))
+    return random.uniform(0.0, base)
 
 
 def _generate_with_model(model, payload, key):
@@ -88,9 +93,10 @@ def _generate_with_model(model, payload, key):
         except urllib.error.HTTPError as exc:
             if exc.code in RETRYABLE_HTTP_CODES and attempt < MAX_ATTEMPTS_PER_MODEL - 1:
                 delay = _retry_delay(exc, attempt + 1)
-                exc.close()
-                time.sleep(delay)
-                continue
+                if delay is not None:
+                    exc.close()
+                    time.sleep(delay)
+                    continue
             detail = exc.read(1500).decode("utf-8", errors="replace")
             if key:
                 detail = detail.replace(key, "[REDACTED]")

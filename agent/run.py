@@ -355,7 +355,7 @@ def run_cycle(request=None, generator=generate):
         "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
         + str(len(unit_test_methods)) + " unittest methods are present across Python files under tests/. "
         + "Names: " + ", ".join(unit_test_methods) + ". "
-        + "Use this exact count and list; do not estimate, omit tests, or claim the test file is absent."
+        + "Use this exact count and list; do not estimate, omit tests, or claim test files are absent."
     )
     checkpoint = CheckpointStore(
         WORKSPACE / "CHECKPOINT.json",
@@ -442,6 +442,7 @@ def run_cycle(request=None, generator=generate):
     patch_proposal_status = persist_patch_proposal(
         outputs.get("Developer Planner", ""), patch_proposal_path
     )
+    checkpoint.set_metadata("patch_proposal_status", patch_proposal_status)
 
     hr_prompt = (
         context + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
@@ -573,18 +574,23 @@ def write_failure_state(error):
     state = read_state()
     checkpoint_path = WORKSPACE / "CHECKPOINT.json"
     completed = []
+    patch_status = {"status": "not_generated_due_to_failure", "changes": 0}
     try:
         checkpoint_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-        if isinstance(checkpoint_data, dict) and isinstance(checkpoint_data.get("outputs"), dict):
-            completed = [name for name in checkpoint_data["outputs"] if name != "__hr_output__"]
+        if isinstance(checkpoint_data, dict):
+            if isinstance(checkpoint_data.get("outputs"), dict):
+                completed = [name for name in checkpoint_data["outputs"] if name != "__hr_output__"]
+            metadata = checkpoint_data.get("metadata", {})
+            if isinstance(metadata, dict) and isinstance(metadata.get("patch_proposal_status"), dict):
+                patch_status = metadata["patch_proposal_status"]
     except (OSError, UnicodeError, json.JSONDecodeError):
         pass
     state.update({
         "status": "failed",
         "completed_agents": completed,
         "checkpoint_available": checkpoint_path.is_file(),
-        "patch_proposal_status": {"status": "not_generated_due_to_failure", "changes": 0},
-        "patch_proposal_path": None,
+        "patch_proposal_status": patch_status,
+        "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_status.get("status") == "validated" else None,
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
         "last_error": str(error)[:1500],
         "next_step": "Start a new workflow_dispatch run on main; matching request/source checkpoints will resume completed stages automatically.",

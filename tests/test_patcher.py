@@ -171,6 +171,20 @@ class PatchPreparationTests(unittest.TestCase):
             with self.assertRaisesRegex(PatchSpecError, "manual workflow dispatch"):
                 main()
 
+    def test_apply_proposal_rejects_non_owner_even_with_dispatch_choice(self):
+        import os
+        from unittest.mock import patch
+        from agent.apply_proposal import main
+
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_ACTOR": "other-collaborator",
+            "GITHUB_REF": "refs/heads/main",
+            "PATCH_AUTHORIZATION": "APPLY_TO_BRANCH",
+        }, clear=True):
+            with self.assertRaisesRegex(PatchSpecError, "repository owner"):
+                main()
+
     def test_rejects_missing_target_file(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(PatchSpecError, "existing file"):

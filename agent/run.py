@@ -626,7 +626,7 @@ def classify_failure(error):
     if any(term in message for term in ("git conflict", "merge conflict", "non-fast-forward", "rebase conflict")):
         return {"category": "git_conflict", "retryable": False,
                 "strategy": "manual_reconciliation", "action": "Do not rerun blindly. Reconcile the branch against the current main, inspect the diff, then rerun from a verified checkpoint."}
-    if any(term in message for term in ("missing gemini_api_key", "invalid api key", "credential", "configuration error")):
+    if any(term in message for term in ("missing gemini_api_key", "missing openai_api_key", "missing provider api key", "invalid api key", "credential", "configuration error")):
         return {"category": "configuration", "retryable": False,
                 "strategy": "configuration_repair", "action": "Check repository secret names and model configuration. Do not repeat the run until configuration is corrected."}
     retryable = (

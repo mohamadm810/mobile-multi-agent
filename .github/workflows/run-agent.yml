@@ -38,7 +38,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add workspace/REPORT.md workspace/STATE.json
           # Keep resumable stage outputs across failed workflow reruns; stage deletion on success.
-          git add -A workspace/CHECKPOINT.json
+          if [ -f workspace/CHECKPOINT.json ]; then
+            git add workspace/CHECKPOINT.json
+          else
+            git rm --cached --ignore-unmatch workspace/CHECKPOINT.json
+          fi
           if [ -f workspace/TEAM.json ]; then git add workspace/TEAM.json; fi
           if git diff --cached --quiet; then
             echo "No report changes"

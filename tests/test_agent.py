@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import os
@@ -24,6 +25,10 @@ class GeminiResponseTests(unittest.TestCase):
     def test_missing_candidates_is_clear_error(self):
         with self.assertRaisesRegex(AgentError, "no candidates"):
             _extract_text({})
+
+    def test_malformed_candidate_is_clear_error(self):
+        with self.assertRaisesRegex(AgentError, "malformed candidate"):
+            _extract_text({"candidates": [None]})
 
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_key_fails_before_network(self):
@@ -100,6 +105,63 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertEqual(gemini.ATTEMPTED_MODELS, ["primary-model", "fallback-model"])
         self.assertEqual(gemini.USED_MODELS, [])
 
+
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_intermediate_fallback_model_can_succeed(self, mocked_urlopen, _sleep):
+        import agent.gemini as gemini
+
+        failures = [
+            urllib.error.HTTPError(
+                "https://example.invalid", 503, "busy", {},
+                io.BytesIO(b"temporary outage")
+            )
+            for _ in range(6)
+        ]
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "third model ok"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [*failures, success]
+
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch(
+            "agent.gemini.FALLBACK_MODELS", ["fallback-one", "fallback-two"]
+        ):
+            gemini.USED_MODELS.clear()
+            gemini.ATTEMPTED_MODELS.clear()
+            self.assertEqual(generate("role", "prompt"), "third model ok")
+
+        self.assertEqual(mocked_urlopen.call_count, 7)
+        self.assertEqual(
+            gemini.ATTEMPTED_MODELS,
+            ["primary-model", "fallback-one", "fallback-two"],
+        )
+        self.assertEqual(gemini.USED_MODELS, ["fallback-two"])
+        self.assertEqual(gemini.ACTIVE_MODEL, "fallback-two")
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_incomplete_http_response_retries_and_uses_fallback(self, mocked_urlopen, _sleep):
+        interrupted = http.client.IncompleteRead(b"partial", 100)
+        failures = [interrupted, interrupted, interrupted]
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "recovered"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [*failures, success]
+
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            self.assertEqual(generate("role", "prompt"), "recovered")
+
+        self.assertEqual(mocked_urlopen.call_count, 4)
+        self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
     def test_reset_run_tracking_clears_models_and_restores_primary(self):
         import agent.gemini as gemini
@@ -228,6 +290,29 @@ class AtomicPersistenceTests(unittest.TestCase):
                 json.loads(target.read_text(encoding="utf-8")),
                 {"status": "new"},
             )
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["STATE.json"])
+
+
+
+class ConcurrentAtomicPersistenceTests(unittest.TestCase):
+    def test_concurrent_atomic_writes_never_leave_partial_json(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from agent.run import atomic_write_text
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "STATE.json"
+
+            def write_version(version):
+                payload = json.dumps({"version": version, "values": list(range(100))})
+                for _ in range(10):
+                    atomic_write_text(target, payload)
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(write_version, range(8)))
+
+            saved = json.loads(target.read_text(encoding="utf-8"))
+            self.assertIn(saved["version"], range(8))
+            self.assertEqual(saved["values"], list(range(100)))
             self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["STATE.json"])
 
 

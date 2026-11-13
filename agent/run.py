@@ -573,24 +573,40 @@ def write_failure_state(error):
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     state = read_state()
     checkpoint_path = WORKSPACE / "CHECKPOINT.json"
+    proposal_path = WORKSPACE / "PATCH_PROPOSAL.json"
     completed = []
     patch_status = {"status": "not_generated_due_to_failure", "changes": 0}
+    checkpoint_valid = False
     try:
-        checkpoint_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-        if isinstance(checkpoint_data, dict):
-            if isinstance(checkpoint_data.get("outputs"), dict):
-                completed = [name for name in checkpoint_data["outputs"] if name != "__hr_output__"]
-            metadata = checkpoint_data.get("metadata", {})
-            if isinstance(metadata, dict) and isinstance(metadata.get("patch_proposal_status"), dict):
-                patch_status = metadata["patch_proposal_status"]
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        pass
+        current_request = read_request()
+        checkpoint = CheckpointStore(
+            checkpoint_path,
+            hashlib.sha256(current_request.encode("utf-8")).hexdigest(),
+            repository_fingerprint(),
+        )
+        completed = [name for name in checkpoint.outputs if name != "__hr_output__"]
+        checkpoint_valid = checkpoint_path.is_file() and bool(checkpoint.outputs or checkpoint.metadata)
+        saved_status = checkpoint.get_metadata("patch_proposal_status", {})
+        if isinstance(saved_status, dict) and saved_status.get("status") == "validated":
+            try:
+                validate_patch_spec(json.loads(proposal_path.read_text(encoding="utf-8")))
+                patch_status = saved_status
+            except (OSError, UnicodeError, json.JSONDecodeError, PatchSpecError, TypeError, ValueError):
+                proposal_path.unlink(missing_ok=True)
+                patch_status = {"status": "rejected", "changes": 0}
+        else:
+            proposal_path.unlink(missing_ok=True)
+    except Exception:
+        try:
+            proposal_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     state.update({
         "status": "failed",
         "completed_agents": completed,
-        "checkpoint_available": checkpoint_path.is_file(),
+        "checkpoint_available": checkpoint_valid,
         "patch_proposal_status": patch_status,
-        "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_status.get("status") == "validated" else None,
+        "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_status["status"] == "validated" else None,
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
         "last_error": str(error)[:1500],
         "next_step": "Start a new workflow_dispatch run on main; matching request/source checkpoints will resume completed stages automatically.",

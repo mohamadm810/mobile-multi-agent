@@ -54,14 +54,17 @@ def read_request():
 REPOSITORY_EVIDENCE_FILES = [
     "agent/config.py",
     "agent/gemini.py",
-    "agent/run.py",
     "agent/roles.py",
+    "agent/resilience.py",
+    "agent/patch_spec.py",
+    "agent/patcher.py",
     ".github/workflows/run-agent.yml",
     "tests/test_agent.py",
-    "agent/resilience.py",
     "tests/test_resilience.py",
+    "tests/test_patcher.py",
+    "agent/run.py",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 85000
+MAX_REPOSITORY_CONTEXT_CHARS = 105000
 
 
 def read_repository_context():

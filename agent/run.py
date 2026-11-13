@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,8 @@ from pathlib import Path
 from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
+from .resilience import CheckpointStore, CircuitBreaker, call_with_retries
+from .patch_spec import PatchSpecError, validate_patch_spec, patch_proposal_fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace"
@@ -52,12 +55,20 @@ def read_request():
 REPOSITORY_EVIDENCE_FILES = [
     "agent/config.py",
     "agent/gemini.py",
-    "agent/run.py",
     "agent/roles.py",
+    "agent/resilience.py",
+    "agent/patch_spec.py",
+    "agent/patcher.py",
+    "agent/apply_proposal.py",
     ".github/workflows/run-agent.yml",
+    ".github/workflows/apply-proposal.yml",
+    ".github/workflows/tests.yml",
     "tests/test_agent.py",
+    "tests/test_resilience.py",
+    "tests/test_patcher.py",
+    "agent/run.py",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 65000
+MAX_REPOSITORY_CONTEXT_CHARS = 120000
 
 
 def read_repository_context():
@@ -81,18 +92,63 @@ def read_repository_context():
     return "\n".join(sections)
 
 
-def get_unit_test_inventory():
-    """Return exact unittest method names found in the checked-in test source."""
-    test_file = ROOT / "tests" / "test_agent.py"
+def persist_patch_proposal(developer_output, proposal_path):
+    """Persist only a strictly validated proposal explicitly emitted by Developer."""
+    proposal_path = Path(proposal_path)
+    marker = "PATCH_PROPOSAL_JSON:"
+    if not isinstance(developer_output, str) or marker not in developer_output:
+        proposal_path.unlink(missing_ok=True)
+        return {"status": "not_provided", "changes": 0}
+    payload = developer_output.split(marker, 1)[1].strip()
+    if payload.lower() == "none":
+        proposal_path.unlink(missing_ok=True)
+        return {"status": "none", "changes": 0}
     try:
-        tree = ast.parse(test_file.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeError):
-        return []
+        validated = validate_patch_spec(payload)
+    except (PatchSpecError, TypeError, ValueError) as exc:
+        proposal_path.unlink(missing_ok=True)
+        return {"status": "rejected", "changes": 0, "reason": str(exc)[:300]}
+    atomic_write_text(proposal_path, json.dumps(validated, ensure_ascii=False, indent=2) + "\n")
+    return {
+        "status": "validated",
+        "changes": len(validated["changes"]),
+        "proposal_fingerprint": patch_proposal_fingerprint(validated),
+    }
+
+def repository_fingerprint():
+    """Hash source evidence so checkpoints never cross code revisions."""
+    digest = hashlib.sha256()
+    for relative_path in REPOSITORY_EVIDENCE_FILES:
+        path = ROOT / relative_path
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_bytes()
+        except OSError:
+            continue
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\\0")
+        digest.update(content)
+        digest.update(b"\\0")
+    return digest.hexdigest()
+
+
+def get_unit_test_inventory():
+    """Return exact test method identifiers across every Python test file."""
+    test_root = ROOT / "tests"
     names = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-            names.append(node.name)
-    return sorted(set(names))
+    if not test_root.is_dir():
+        return names
+    for test_file in sorted(test_root.rglob("test*.py")):
+        try:
+            tree = ast.parse(test_file.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+        relative = test_file.relative_to(ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+                names.append(f"{relative}:{node.name}")
+    return sorted(names)
 
 
 def atomic_write_text(path, content):
@@ -133,16 +189,12 @@ def read_state():
 CORE_AGENT_NAMES = {name for name, _ in STAGES} | {"Agent Recruitment & Governance"}
 
 
-def read_team_registry():
-    """Load only validated custom-agent definitions; never override protected core roles."""
-    if not TEAM_FILE.is_file():
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
-    try:
-        data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
+def normalize_team_registry(data):
+    """Validate registry data regardless of whether it came from disk or a checkpoint."""
+    empty = {"version": 1, "custom_agents": [], "archived_agents": [],
+             "role_overrides": {}, "disabled_agents": []}
     if not isinstance(data, dict) or not isinstance(data.get("custom_agents"), list):
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
+        return empty
     active, seen = [], set()
     for item in data["custom_agents"]:
         if not isinstance(item, dict):
@@ -157,20 +209,37 @@ def read_team_registry():
             continue
         seen.add(name)
         active.append({"name": name.strip(), "mission": mission.strip(), "prompt": prompt})
-    data["version"] = 1
-    data["custom_agents"] = active[:MAX_CUSTOM_AGENTS]
     overrides = data.get("role_overrides", {})
     if not isinstance(overrides, dict):
         overrides = {}
-    data["role_overrides"] = {key: value for key, value in overrides.items()
-                              if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
-                              and isinstance(value, str) and 50 <= len(value) <= 4000}
     disabled = data.get("disabled_agents", [])
-    data["disabled_agents"] = sorted({name for name in disabled if isinstance(name, str)
-                                      and name in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}}) if isinstance(disabled, list) else []
     archived = data.get("archived_agents", [])
-    data["archived_agents"] = [item for item in archived if isinstance(item, dict)][-50:] if isinstance(archived, list) else []
-    return data
+    return {
+        "version": 1,
+        "custom_agents": active[:MAX_CUSTOM_AGENTS],
+        "role_overrides": {
+            key: value for key, value in overrides.items()
+            if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
+            and isinstance(value, str) and 50 <= len(value) <= 4000
+        },
+        "disabled_agents": sorted({
+            name for name in disabled if isinstance(name, str)
+            and name in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
+        }) if isinstance(disabled, list) else [],
+        "archived_agents": [item for item in archived if isinstance(item, dict)][-50:]
+        if isinstance(archived, list) else [],
+    }
+
+
+def read_team_registry():
+    """Load only validated custom-agent definitions; never override protected core roles."""
+    if not TEAM_FILE.is_file():
+        return normalize_team_registry({})
+    try:
+        data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return normalize_team_registry({})
+    return normalize_team_registry(data)
 
 
 def _extract_hr_json(output):
@@ -288,11 +357,33 @@ def run_cycle(request=None, generator=generate):
     unit_test_methods = get_unit_test_inventory()
     context += (
         "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
-        + str(len(unit_test_methods)) + " unittest methods are present in tests/test_agent.py. "
+        + str(len(unit_test_methods)) + " unittest methods are present across Python files under tests/. "
         + "Names: " + ", ".join(unit_test_methods) + ". "
-        + "Use this exact count and list; do not estimate, omit tests, or claim the test file is absent."
+        + "Use this exact count and list; do not estimate, omit tests, or claim test files are absent."
     )
-    outputs = {}
+    request_fingerprint = hashlib.sha256(request.encode("utf-8")).hexdigest()
+    source_fingerprint = repository_fingerprint()
+    try:
+        team_bytes = TEAM_FILE.read_bytes() if TEAM_FILE.is_file() else b""
+    except OSError:
+        team_bytes = b""
+    team_fingerprint = hashlib.sha256(team_bytes).hexdigest()
+    run_id = os.getenv("GITHUB_RUN_ID") or "local"
+    checkpoint = CheckpointStore(
+        WORKSPACE / "CHECKPOINT.json",
+        request_fingerprint,
+        source_fingerprint,
+        run_id=run_id,
+        team_fingerprint=team_fingerprint,
+    )
+    dependency_breaker = CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
+    outputs = {
+        key: value for key, value in checkpoint.outputs.items()
+        if key != "__hr_output__"
+    }
+    resumed_stages = list(outputs)
+    patch_proposal_path = WORKSPACE / "PATCH_PROPOSAL.json"
+    patch_proposal_path.unlink(missing_ok=True)
     registry = read_team_registry()
     custom_agents = registry["custom_agents"]
     role_metrics = {}
@@ -306,6 +397,8 @@ def run_cycle(request=None, generator=generate):
         "Documentation Agent": ["Software Architect", "Independent Tester", "Independent Reviewer", "Central Supervisor"],
     }
     for name, role in STAGES:
+        if name in outputs:
+            continue
         if name in registry["disabled_agents"]:
             continue
         role = registry["role_overrides"].get(name, role)
@@ -333,7 +426,11 @@ def run_cycle(request=None, generator=generate):
             + runtime_evidence
         )
         started = __import__("time").perf_counter()
-        outputs[name] = generator(role, prompt)
+        outputs[name] = call_with_retries(
+            lambda: generator(role, prompt), max_attempts=1,
+            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
+        )
+        checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
             "output_characters": len(outputs[name]),
@@ -342,6 +439,8 @@ def run_cycle(request=None, generator=generate):
 
     for custom in custom_agents:
         name = custom["name"]
+        if name in outputs:
+            continue
         started = __import__("time").perf_counter()
         custom_prompt = (
             context + "\n\nCUSTOM AGENT MISSION: " + custom["mission"]
@@ -350,12 +449,21 @@ def run_cycle(request=None, generator=generate):
             + "\n\nPRIOR TEAM OUTPUTS:\n"
             + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
         )
-        outputs[name] = generator(custom["prompt"], custom_prompt)
+        outputs[name] = call_with_retries(
+            lambda: generator(custom["prompt"], custom_prompt), max_attempts=1,
+            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
+        )
+        checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
             "output_characters": len(outputs[name]),
             "status": "success",
         }
+
+    patch_proposal_status = persist_patch_proposal(
+        outputs.get("Developer Planner", ""), patch_proposal_path
+    )
+    checkpoint.set_metadata("patch_proposal_status", patch_proposal_status)
 
     hr_prompt = (
         context + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
@@ -369,16 +477,46 @@ def run_cycle(request=None, generator=generate):
         "Any manager concern must be a recommendation for human approval."
     )
     hr_started = __import__("time").perf_counter()
-    hr_output = generator(HR, hr_prompt)
+    hr_output = checkpoint.get_stage("__hr_output__")
+    if hr_output is None:
+        hr_output = call_with_retries(
+            lambda: generator(HR, hr_prompt), max_attempts=1,
+            max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
+        )
+        checkpoint.record_stage("__hr_output__", hr_output)
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
-    try:
-        hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
-        hr_status = "valid"
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
-                       "manager_review": "none", "actions": []}
-        hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
-        hr_status = "rejected"
+
+    # Persist the complete HR transaction before writing TEAM.json. If the
+    # workflow is interrupted between those writes, replay the saved result
+    # instead of applying the same staffing action twice.
+    hr_transaction = checkpoint.get_metadata("hr_transaction")
+    if (isinstance(hr_transaction, dict)
+            and isinstance(hr_transaction.get("registry"), dict)
+            and isinstance(hr_transaction.get("decision"), dict)
+            and isinstance(hr_transaction.get("applied"), list)
+            and hr_transaction.get("status") in {"valid", "rejected"}):
+        registry = normalize_team_registry(hr_transaction["registry"])
+        hr_decision = hr_transaction["decision"]
+        hr_applied = [item for item in hr_transaction["applied"] if isinstance(item, str)][:10]
+        hr_status = hr_transaction["status"]
+    else:
+        try:
+            hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
+            hr_status = "valid"
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
+                           "manager_review": "none", "actions": []}
+            hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
+            hr_status = "rejected"
+        checkpoint.set_metadata("hr_transaction", {
+            "decision": hr_decision,
+            "applied": hr_applied,
+            "status": hr_status,
+            "registry": registry,
+            "team_fingerprint_after": hashlib.sha256(
+                (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            ).hexdigest(),
+        })
     outputs["Agent Recruitment & Governance"] = (
         "### HR decision\n" + str(hr_decision.get("summary", "No summary supplied."))
         + "\n\n### Manager review\n" + str(hr_decision.get("manager_review", "none"))
@@ -418,6 +556,8 @@ def run_cycle(request=None, generator=generate):
         f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
         f"\nتعداد متدهای تست موجود در سورس: `{len(unit_test_methods)}`",
         "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
+        f"\nمراحل بازیابی‌شده از checkpoint: {len(resumed_stages)}",
+        f"\nوضعیت پیشنهاد تغییر کد: {patch_proposal_status['status']} (تعداد فایل‌ها: {patch_proposal_status['changes']})",
         f"\nمدل(های) تلاش‌شده: `{', '.join(models_attempted) or 'ثبت نشده'}`",
         f"\nمدل(های) پاسخ‌گوی موفق: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
@@ -429,9 +569,16 @@ def run_cycle(request=None, generator=generate):
     new_state = {
         "last_run_utc": now,
         "request_snapshot": request[:5000],
+        "request_fingerprint": request_fingerprint,
+        "source_fingerprint": source_fingerprint,
         "status": "planning_review_required",
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
+        "resumed_agents": resumed_stages,
+        "checkpoint_resumed_from_run_id": checkpoint.resumed_from_run_id,
+        "checkpoint_available": False,
+        "patch_proposal_status": patch_proposal_status,
+        "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_proposal_status["status"] == "validated" else None,
         "role_metrics": role_metrics,
         "team_registry": "workspace/TEAM.json",
         "active_custom_agents": [item["name"] for item in registry["custom_agents"]],
@@ -447,6 +594,7 @@ def run_cycle(request=None, generator=generate):
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",
     }
     atomic_write_text(STATE_FILE, json.dumps(new_state, ensure_ascii=False, indent=2) + "\n")
+    checkpoint.clear()
     return outputs
 
 
@@ -454,11 +602,58 @@ def run_cycle(request=None, generator=generate):
 def write_failure_state(error):
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     state = read_state()
+    checkpoint_path = WORKSPACE / "CHECKPOINT.json"
+    proposal_path = WORKSPACE / "PATCH_PROPOSAL.json"
+    completed = []
+    patch_status = {"status": "not_generated_due_to_failure", "changes": 0}
+    checkpoint_valid = False
+    try:
+        current_request = read_request()
+        try:
+            team_bytes = TEAM_FILE.read_bytes() if TEAM_FILE.is_file() else b""
+        except OSError:
+            team_bytes = b""
+        checkpoint = CheckpointStore(
+            checkpoint_path,
+            hashlib.sha256(current_request.encode("utf-8")).hexdigest(),
+            repository_fingerprint(),
+            run_id=os.getenv("GITHUB_RUN_ID") or "local",
+            team_fingerprint=hashlib.sha256(team_bytes).hexdigest(),
+        )
+        completed = [name for name in checkpoint.outputs if name != "__hr_output__"]
+        checkpoint_valid = checkpoint_path.is_file() and bool(checkpoint.outputs or checkpoint.metadata)
+        saved_status = checkpoint.get_metadata("patch_proposal_status", {})
+        if isinstance(saved_status, dict) and saved_status.get("status") == "validated":
+            try:
+                validate_patch_spec(json.loads(proposal_path.read_text(encoding="utf-8")))
+                patch_status = saved_status
+            except (OSError, UnicodeError, json.JSONDecodeError, PatchSpecError, TypeError, ValueError):
+                proposal_path.unlink(missing_ok=True)
+                patch_status = {"status": "rejected", "changes": 0}
+        else:
+            proposal_path.unlink(missing_ok=True)
+    except Exception:
+        try:
+            proposal_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    recovery_status = "paused_recovery_required" if checkpoint_valid else "failed"
     state.update({
-        "status": "failed",
+        "status": recovery_status,
+        "completed_agents": completed,
+        "checkpoint_available": checkpoint_valid,
+        "patch_proposal_status": patch_status,
+        "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_status["status"] == "validated" else None,
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
         "last_error": str(error)[:1500],
-        "next_step": "Review the Actions log, resolve the reported issue, then rerun the workflow.",
+        "recovery": {
+            "status": recovery_status,
+            "last_successful_stage": completed[-1] if completed else None,
+            "checkpoint_run_id": os.getenv("GITHUB_RUN_ID") or "local",
+            "action_required": "Inspect the error, then rerun workflow_dispatch on main. Only checkpoints matching request, source, team registry, and integrity checksum will resume."
+                if checkpoint_valid else "No valid checkpoint is available; inspect the error before starting a fresh run.",
+        },
+        "next_step": "Inspect workspace/STATE.json and workspace/REPORT.md. If recovery is paused, rerun workflow_dispatch on main; matching checkpoints resume completed stages automatically.",
     })
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 

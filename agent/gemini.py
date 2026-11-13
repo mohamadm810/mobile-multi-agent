@@ -1,7 +1,10 @@
 import http.client
 import json
 import os
+import random
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import urllib.error
 import urllib.request
 
@@ -38,14 +41,14 @@ ACTIVE_MODEL = MODEL
 def _extract_text(data):
     candidates = data.get("candidates") if isinstance(data, dict) else None
     if not isinstance(candidates, list) or not candidates:
-        raise AgentError("Gemini returned no candidates.")
+        raise AgentError("Gemini returned no candidates.", retryable=True)
     candidate = candidates[0]
     if not isinstance(candidate, dict):
-        raise AgentError("Gemini returned a malformed candidate.")
+        raise AgentError("Gemini returned a malformed candidate.", retryable=True)
     content = candidate.get("content", {})
     parts = content.get("parts", []) if isinstance(content, dict) else []
     if not isinstance(parts, list):
-        raise AgentError("Gemini returned malformed content parts.")
+        raise AgentError("Gemini returned malformed content parts.", retryable=True)
     chunks = [
         part.get("text", "")
         for part in parts
@@ -53,18 +56,28 @@ def _extract_text(data):
     ]
     result = "\n".join(chunk for chunk in chunks if chunk.strip()).strip()
     if not result:
-        raise AgentError("Gemini returned an empty or non-text response.")
+        raise AgentError("Gemini returned an empty or non-text response.", retryable=True)
     return result
 
 
 def _retry_delay(error, attempt):
+    """Return a jittered delay; None means Retry-After exceeds the safe wait budget."""
     retry_after = error.headers.get("Retry-After") if error is not None and error.headers else None
     if retry_after:
         try:
-            return min(30.0, max(1.0, float(retry_after)))
+            delay = float(retry_after)
         except (TypeError, ValueError):
-            pass
-    return min(20.0, 2.0 ** attempt)
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                delay = None
+        if delay is not None and delay >= 0:
+            return delay if delay <= 30.0 else None
+    base = min(20.0, 2.0 ** max(0, attempt - 1))
+    return random.uniform(0.0, base)
 
 
 def _generate_with_model(model, payload, key):
@@ -88,9 +101,10 @@ def _generate_with_model(model, payload, key):
         except urllib.error.HTTPError as exc:
             if exc.code in RETRYABLE_HTTP_CODES and attempt < MAX_ATTEMPTS_PER_MODEL - 1:
                 delay = _retry_delay(exc, attempt + 1)
-                exc.close()
-                time.sleep(delay)
-                continue
+                if delay is not None:
+                    exc.close()
+                    time.sleep(delay)
+                    continue
             detail = exc.read(1500).decode("utf-8", errors="replace")
             if key:
                 detail = detail.replace(key, "[REDACTED]")
@@ -111,7 +125,7 @@ def _generate_with_model(model, payload, key):
             ) from None
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise AgentError(
-                f"Gemini returned an invalid response on {model}: {type(exc).__name__}"
+                f"Gemini returned an invalid response on {model}: {type(exc).__name__}", retryable=True
             ) from None
     raise AgentError(f"Gemini API request failed on {model} after retries.")
 

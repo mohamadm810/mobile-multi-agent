@@ -13,12 +13,40 @@ permissions:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.12"
-      - name: Compile
-        run: python -m compileall -q agent tests
-      - name: Unit tests
-        run: python -m unittest discover -s tests -v
+      - name: Validate workflow YAML syntax
+        run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }; puts "Workflow YAML syntax OK"' .github/workflows/*.yml
+      - name: Pull isolated Python runtime
+        run: |
+          for attempt in 1 2 3; do
+            if docker pull python:3.12-slim; then
+              exit 0
+            fi
+            echo "Image pull failed on attempt $attempt"
+            sleep $((attempt * 2))
+          done
+          echo "Could not obtain the isolated Python runtime"
+          exit 1
+      - name: Compile and test in a network-isolated container
+        env:
+          WORKSPACE_PATH: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network none \
+            --cpus 1 \
+            --memory 2g \
+            --pids-limit 128 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user 65532:65532 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+            --mount "type=bind,src=$WORKSPACE_PATH,dst=/workspace,readonly" \
+            --workdir /workspace \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            --env PYTHONUNBUFFERED=1 \
+            --env HOME=/tmp \
+            python:3.12-slim \
+            python -c "from pathlib import Path; import subprocess, sys; files=list(Path('agent').rglob('*.py'))+list(Path('tests').rglob('*.py')); [compile(p.read_text(encoding='utf-8'), str(p), 'exec') for p in files]; result=subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], check=False); sys.exit(result.returncode)"

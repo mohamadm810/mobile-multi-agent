@@ -167,6 +167,24 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_count, 4)
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_malformed_primary_response_uses_fallback_model(self, mocked_urlopen):
+        malformed = MagicMock()
+        malformed.__enter__.return_value.read.return_value = b"{not-valid-json"
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "recovered by fallback"}]}}]
+        }).encode()
+        mocked_urlopen.side_effect = [malformed, success]
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            self.assertEqual(generate("role", "prompt"), "recovered by fallback")
+        self.assertEqual(mocked_urlopen.call_count, 2)
+        self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
+
     def test_reset_run_tracking_clears_models_and_restores_primary(self):
         import agent.gemini as gemini
         gemini.USED_MODELS.append("fallback-model")
@@ -218,22 +236,55 @@ class GeminiResponseTests(unittest.TestCase):
                 generate("role", "prompt")
         self.assertEqual(mocked_urlopen.call_count, 1)
 
-    def test_invalid_retry_after_uses_exponential_default(self):
+    def test_invalid_retry_after_uses_jittered_exponential_default(self):
         error = urllib.error.HTTPError(
             "https://example.invalid", 503, "busy",
             {"Retry-After": "not-a-number"}, None
         )
-        self.assertEqual(_retry_delay(error, 2), 4.0)
+        with patch("agent.gemini.random.uniform", return_value=4.0) as jitter:
+            self.assertEqual(_retry_delay(error, 2), 4.0)
+        jitter.assert_called_once_with(0.0, 2.0)
 
-    def test_retry_after_is_clamped_to_safe_bounds(self):
+    def test_negative_retry_after_uses_jitter_and_excessive_delay_is_not_retried_early(self):
         negative = urllib.error.HTTPError(
             "https://example.invalid", 503, "busy", {"Retry-After": "-10"}, None
         )
         excessive = urllib.error.HTTPError(
             "https://example.invalid", 503, "busy", {"Retry-After": "120"}, None
         )
-        self.assertEqual(_retry_delay(negative, 1), 1.0)
-        self.assertEqual(_retry_delay(excessive, 1), 30.0)
+        with patch("agent.gemini.random.uniform", return_value=0.5):
+            self.assertEqual(_retry_delay(negative, 1), 0.5)
+        self.assertIsNone(_retry_delay(excessive, 1))
+
+
+    def test_http_date_retry_after_is_parsed(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        future = datetime.now(timezone.utc) + timedelta(seconds=8)
+        error = urllib.error.HTTPError(
+            "https://example.invalid", 503, "busy",
+            {"Retry-After": format_datetime(future, usegmt=True)}, None
+        )
+        delay = _retry_delay(error, 1)
+        self.assertIsNotNone(delay)
+        self.assertGreaterEqual(delay, 0.0)
+        self.assertLessEqual(delay, 30.0)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_long_retry_after_stops_primary_attempt_without_early_retry(self, mocked_urlopen, mocked_sleep):
+        mocked_urlopen.side_effect = urllib.error.HTTPError(
+            "https://example.invalid", 429, "busy", {"Retry-After": "120"}, None
+        )
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", []):
+            with self.assertRaisesRegex(AgentError, "HTTP 429"):
+                generate("role", "prompt")
+        self.assertEqual(mocked_urlopen.call_count, 1)
+        mocked_sleep.assert_not_called()
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
     @patch("agent.gemini.urllib.request.urlopen")

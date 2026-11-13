@@ -30,6 +30,10 @@ class GeminiResponseTests(unittest.TestCase):
         with self.assertRaisesRegex(AgentError, "malformed candidate"):
             _extract_text({"candidates": [None]})
 
+    def test_malformed_content_parts_is_clear_error(self):
+        with self.assertRaisesRegex(AgentError, "malformed content parts"):
+            _extract_text({"candidates": [{"content": {"parts": None}}]})
+
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_key_fails_before_network(self):
         with self.assertRaisesRegex(AgentError, "Missing GEMINI_API_KEY"):
@@ -365,6 +369,32 @@ class ConfigValidationTests(unittest.TestCase):
 
 
 class RequestValidationTests(unittest.TestCase):
+    def test_read_request_rejects_html_comment_only_template(self):
+        from agent.run import read_request
+        with tempfile.TemporaryDirectory() as directory:
+            request_file = Path(directory) / "REQUEST.md"
+            request_file.write_text("<!-- template only -->", encoding="utf-8")
+            with patch("agent.run.REQUEST_FILE", request_file):
+                with self.assertRaisesRegex(AgentError, "empty/template-only"):
+                    read_request()
+
+    def test_read_request_keeps_real_text_after_html_comment(self):
+        from agent.run import read_request
+        with tempfile.TemporaryDirectory() as directory:
+            request_file = Path(directory) / "REQUEST.md"
+            request_file.write_text("<!-- template note -->\nPlease audit the retry flow.", encoding="utf-8")
+            with patch("agent.run.REQUEST_FILE", request_file):
+                self.assertEqual(read_request(), "Please audit the retry flow.")
+
+    def test_read_request_rejects_oversized_raw_content(self):
+        from agent.run import read_request
+        with tempfile.TemporaryDirectory() as directory:
+            request_file = Path(directory) / "REQUEST.md"
+            request_file.write_text("<!-- " + ("x" * 12001) + " -->", encoding="utf-8")
+            with patch("agent.run.REQUEST_FILE", request_file):
+                with self.assertRaises(AgentError):
+                    read_request()
+
     def test_rejects_empty_request(self):
         from agent.run import run_cycle
         with self.assertRaisesRegex(AgentError, "empty"):

@@ -90,7 +90,9 @@ def call_with_retries(
                 else:
                     circuit_breaker.half_open_probe = False
             elapsed = clock() - started
-            if attempt + 1 >= max_attempts or not can_retry or elapsed >= max_elapsed_seconds:
+            if elapsed >= max_elapsed_seconds:
+                raise TimeoutError("Operation exceeded its total execution budget.") from exc
+            if attempt + 1 >= max_attempts or not can_retry:
                 raise
             server_delay = retry_after(exc) if callable(retry_after) else getattr(exc, "retry_after", None)
             if server_delay is not None:

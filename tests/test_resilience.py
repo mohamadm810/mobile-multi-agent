@@ -237,6 +237,49 @@ class CheckpointTests(unittest.TestCase):
         self.assertNotIn("Central Supervisor", registry["role_overrides"])
         self.assertEqual(registry["disabled_agents"], ["Independent Tester"])
 
+
+    def test_failure_with_valid_checkpoint_is_marked_paused_for_recovery(self):
+        import hashlib
+        from unittest.mock import patch
+        from agent.run import write_failure_state
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint_path = root / "CHECKPOINT.json"
+            team_fingerprint = hashlib.sha256(b"").hexdigest()
+            CheckpointStore(
+                checkpoint_path, hashlib.sha256(b"request").hexdigest(),
+                "source-fingerprint", run_id="local", team_fingerprint=team_fingerprint,
+            ).record_stage("Requirements Analyst", "completed")
+            with patch("agent.run.WORKSPACE", root), \
+                 patch("agent.run.STATE_FILE", root / "STATE.json"), \
+                 patch("agent.run.TEAM_FILE", root / "TEAM.json"), \
+                 patch("agent.run.read_state", return_value={}), \
+                 patch("agent.run.read_request", return_value="request"), \
+                 patch("agent.run.repository_fingerprint", return_value="source-fingerprint"):
+                write_failure_state("temporary API outage")
+            state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "paused_recovery_required")
+            self.assertTrue(state["checkpoint_available"])
+            self.assertEqual(state["recovery"]["last_successful_stage"], "Requirements Analyst")
+
+    def test_failure_without_checkpoint_remains_failed(self):
+        from unittest.mock import patch
+        from agent.run import write_failure_state
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("agent.run.WORKSPACE", root), \
+                 patch("agent.run.STATE_FILE", root / "STATE.json"), \
+                 patch("agent.run.TEAM_FILE", root / "TEAM.json"), \
+                 patch("agent.run.read_state", return_value={}), \
+                 patch("agent.run.read_request", side_effect=ValueError("invalid request")), \
+                 patch("agent.run.repository_fingerprint", return_value="source-fingerprint"):
+                write_failure_state("invalid request")
+            state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "failed")
+            self.assertFalse(state["checkpoint_available"])
+
     def test_clear_removes_checkpoint_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CHECKPOINT.json"

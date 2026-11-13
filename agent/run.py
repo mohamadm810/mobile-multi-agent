@@ -155,16 +155,12 @@ def read_state():
 CORE_AGENT_NAMES = {name for name, _ in STAGES} | {"Agent Recruitment & Governance"}
 
 
-def read_team_registry():
-    """Load only validated custom-agent definitions; never override protected core roles."""
-    if not TEAM_FILE.is_file():
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
-    try:
-        data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
+def normalize_team_registry(data):
+    """Validate registry data regardless of whether it came from disk or a checkpoint."""
+    empty = {"version": 1, "custom_agents": [], "archived_agents": [],
+             "role_overrides": {}, "disabled_agents": []}
     if not isinstance(data, dict) or not isinstance(data.get("custom_agents"), list):
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
+        return empty
     active, seen = [], set()
     for item in data["custom_agents"]:
         if not isinstance(item, dict):
@@ -179,20 +175,37 @@ def read_team_registry():
             continue
         seen.add(name)
         active.append({"name": name.strip(), "mission": mission.strip(), "prompt": prompt})
-    data["version"] = 1
-    data["custom_agents"] = active[:MAX_CUSTOM_AGENTS]
     overrides = data.get("role_overrides", {})
     if not isinstance(overrides, dict):
         overrides = {}
-    data["role_overrides"] = {key: value for key, value in overrides.items()
-                              if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
-                              and isinstance(value, str) and 50 <= len(value) <= 4000}
     disabled = data.get("disabled_agents", [])
-    data["disabled_agents"] = sorted({name for name in disabled if isinstance(name, str)
-                                      and name in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}}) if isinstance(disabled, list) else []
     archived = data.get("archived_agents", [])
-    data["archived_agents"] = [item for item in archived if isinstance(item, dict)][-50:] if isinstance(archived, list) else []
-    return data
+    return {
+        "version": 1,
+        "custom_agents": active[:MAX_CUSTOM_AGENTS],
+        "role_overrides": {
+            key: value for key, value in overrides.items()
+            if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
+            and isinstance(value, str) and 50 <= len(value) <= 4000
+        },
+        "disabled_agents": sorted({
+            name for name in disabled if isinstance(name, str)
+            and name in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
+        }) if isinstance(disabled, list) else [],
+        "archived_agents": [item for item in archived if isinstance(item, dict)][-50:]
+        if isinstance(archived, list) else [],
+    }
+
+
+def read_team_registry():
+    """Load only validated custom-agent definitions; never override protected core roles."""
+    if not TEAM_FILE.is_file():
+        return normalize_team_registry({})
+    try:
+        data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return normalize_team_registry({})
+    return normalize_team_registry(data)
 
 
 def _extract_hr_json(output):
@@ -416,13 +429,15 @@ def run_cycle(request=None, generator=generate):
     # workflow is interrupted between those writes, replay the saved result
     # instead of applying the same staffing action twice.
     hr_transaction = checkpoint.get_metadata("hr_transaction")
-    if isinstance(hr_transaction, dict):
-        saved_registry = hr_transaction.get("registry")
-        if isinstance(saved_registry, dict):
-            registry = saved_registry
-        hr_decision = hr_transaction.get("decision", {})
-        hr_applied = hr_transaction.get("applied", [])
-        hr_status = hr_transaction.get("status", "rejected")
+    if (isinstance(hr_transaction, dict)
+            and isinstance(hr_transaction.get("registry"), dict)
+            and isinstance(hr_transaction.get("decision"), dict)
+            and isinstance(hr_transaction.get("applied"), list)
+            and hr_transaction.get("status") in {"valid", "rejected"}):
+        registry = normalize_team_registry(hr_transaction["registry"])
+        hr_decision = hr_transaction["decision"]
+        hr_applied = [item for item in hr_transaction["applied"] if isinstance(item, str)][:10]
+        hr_status = hr_transaction["status"]
     else:
         try:
             hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)

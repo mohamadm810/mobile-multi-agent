@@ -361,6 +361,8 @@ def run_cycle(request=None, generator=generate):
         if key != "__hr_output__"
     }
     resumed_stages = list(outputs)
+    patch_proposal_path = WORKSPACE / "PATCH_PROPOSAL.json"
+    patch_proposal_path.unlink(missing_ok=True)
     registry = read_team_registry()
     custom_agents = registry["custom_agents"]
     role_metrics = {}
@@ -430,6 +432,10 @@ def run_cycle(request=None, generator=generate):
             "output_characters": len(outputs[name]),
             "status": "success",
         }
+
+    patch_proposal_status = persist_patch_proposal(
+        outputs.get("Developer Planner", ""), patch_proposal_path
+    )
 
     hr_prompt = (
         context + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
@@ -516,7 +522,8 @@ def run_cycle(request=None, generator=generate):
         f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
         f"\nتعداد متدهای تست موجود در سورس: `{len(unit_test_methods)}`",
         "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
-        f"\nمراحل بازیابی‌شده از checkpoint: `{len(resumed_stages)}`",
+        f"\nمراحل بازیابی‌شده از checkpoint: {len(resumed_stages)}",
+        f"\nوضعیت پیشنهاد تغییر کد: {patch_proposal_status['status']} (تعداد فایل‌ها: {patch_proposal_status['changes']})",
         f"\nمدل(های) تلاش‌شده: `{', '.join(models_attempted) or 'ثبت نشده'}`",
         f"\nمدل(های) پاسخ‌گوی موفق: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
@@ -533,6 +540,8 @@ def run_cycle(request=None, generator=generate):
         "completed_agents": list(outputs.keys()),
         "resumed_agents": resumed_stages,
         "checkpoint_available": False,
+        "patch_proposal_status": patch_proposal_status,
+        "patch_proposal_path": "workspace/PATCH_PROPOSAL.json" if patch_proposal_status["status"] == "validated" else None,
         "role_metrics": role_metrics,
         "team_registry": "workspace/TEAM.json",
         "active_custom_agents": [item["name"] for item in registry["custom_agents"]],

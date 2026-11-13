@@ -142,7 +142,7 @@ class ProposalFreshnessTests(unittest.TestCase):
 
     def test_rejects_proposal_tampering(self):
         altered = proposal()
-        altered["changes"][0]["unified_diff"] = altered["changes"][0]["unified_diff"].replace("+new\\n", "+altered\\n")
+        altered["changes"][0]["unified_diff"] = altered["changes"][0]["unified_diff"].replace("+new", "+altered")
         with self.assertRaisesRegex(PatchSpecError, "changed after it was reviewed"):
             self.verify(self.state, altered, self.request, self.source)
 

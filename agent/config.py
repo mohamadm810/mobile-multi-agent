@@ -12,6 +12,20 @@ for model_name in [MODEL, *FALLBACK_MODELS]:
         raise ValueError("Invalid Gemini model name.")
 API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 API_URL = API_URL_TEMPLATE.format(model=MODEL)
-MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "3000"))
-REQUEST_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "90"))
-MAX_REQUEST_CHARS = int(os.getenv("MAX_REQUEST_CHARS", "12000"))
+
+
+def _positive_int_env(name, default):
+    """Read a positive integer environment setting with a clear configuration error."""
+    raw_value = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a positive integer.") from None
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
+MAX_OUTPUT_TOKENS = _positive_int_env("MAX_OUTPUT_TOKENS", 3000)
+REQUEST_TIMEOUT_SECONDS = _positive_int_env("GEMINI_TIMEOUT_SECONDS", 90)
+MAX_REQUEST_CHARS = _positive_int_env("MAX_REQUEST_CHARS", 12000)

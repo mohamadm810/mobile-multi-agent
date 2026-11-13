@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.patcher import apply_patch_spec, apply_unified_diff
+from agent.patcher import prepare_patch_spec, apply_unified_diff
 from agent.patch_spec import PatchSpecError, validate_patch_spec
 
 
@@ -96,20 +96,20 @@ class UnifiedDiffTests(unittest.TestCase):
 
 
 class PatchApplicationTests(unittest.TestCase):
-    def test_applies_patch_only_to_existing_allowlisted_file(self):
+    def test_prepares_patch_without_mutating_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent").mkdir()
             target = root / "agent" / "example.py"
             target.write_text("keep\nold\n", encoding="utf-8")
-            changed = apply_patch_spec(root, proposal())
+            changed = prepare_patch_spec(root, proposal())
             self.assertEqual(changed, ["agent/example.py"])
             self.assertEqual(target.read_text(encoding="utf-8"), "keep\nnew\n")
 
     def test_rejects_missing_target_file(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(PatchSpecError, "existing file"):
-                apply_patch_spec(directory, proposal())
+                prepare_patch_spec(directory, proposal())
 
     def test_rejects_symlink_target(self):
         with tempfile.TemporaryDirectory() as directory:

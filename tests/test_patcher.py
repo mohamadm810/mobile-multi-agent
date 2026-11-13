@@ -164,6 +164,7 @@ class PatchPreparationTests(unittest.TestCase):
 
         with patch.dict(os.environ, {
             "GITHUB_EVENT_NAME": "push",
+            "GITHUB_ACTOR": "mohamadm810",
             "GITHUB_REF": "refs/heads/main",
             "PATCH_AUTHORIZATION": "APPLY_TO_BRANCH",
         }, clear=True):

@@ -31,8 +31,13 @@ STAGES = [
 def read_request():
     if not REQUEST_FILE.is_file():
         raise AgentError("workspace/REQUEST.md does not exist.")
-    request = REQUEST_FILE.read_text(encoding="utf-8").strip()
-    if not request or request.startswith("<!--") or len(request) > MAX_REQUEST_CHARS:
+    raw_request = REQUEST_FILE.read_text(encoding="utf-8").strip()
+    if not raw_request or len(raw_request) > MAX_REQUEST_CHARS:
+        raise AgentError(
+            f"Request is empty/template-only or exceeds {MAX_REQUEST_CHARS} characters."
+        )
+    request = re.sub(r"<!--.*?-->", "", raw_request, flags=re.DOTALL).strip()
+    if not request:
         raise AgentError(
             f"Request is empty/template-only or exceeds {MAX_REQUEST_CHARS} characters."
         )

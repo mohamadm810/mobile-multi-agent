@@ -50,7 +50,7 @@ def _extract_text(data):
 
 
 def _retry_delay(error, attempt):
-    retry_after = error.headers.get("Retry-After") if error.headers else None
+    retry_after = error.headers.get("Retry-After") if error is not None and error.headers else None
     if retry_after:
         try:
             return min(30.0, max(1.0, float(retry_after)))

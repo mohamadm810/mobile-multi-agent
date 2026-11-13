@@ -168,6 +168,62 @@ class CheckpointTests(unittest.TestCase):
             store = CheckpointStore(path, "request-a", "source-a")
             self.assertEqual(store.outputs, {})
 
+
+    def test_checkpoint_resumes_after_committed_hr_registry_write(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CHECKPOINT.json"
+            original_team = hashlib.sha256(b"original-team").hexdigest()
+            registry = {
+                "version": 1,
+                "custom_agents": [],
+                "archived_agents": [],
+                "role_overrides": {},
+                "disabled_agents": [],
+            }
+            committed_bytes = (json.dumps(registry, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            committed_team = hashlib.sha256(committed_bytes).hexdigest()
+            store = CheckpointStore(
+                path, "request", "source", run_id="run-before-crash",
+                team_fingerprint=original_team,
+            )
+            store.record_stage("Requirements Analyst", "completed")
+            store.set_metadata("hr_transaction", {
+                "status": "valid",
+                "registry": registry,
+                "team_fingerprint_after": committed_team,
+                "decision": {"summary": "registry updated"},
+                "applied": ["Updated team registry"],
+            })
+
+            # Simulate a crash after TEAM.json was replaced but before final
+            # report/state publication and checkpoint cleanup.
+            resumed = CheckpointStore(
+                path, "request", "source", run_id="recovery-run",
+                team_fingerprint=committed_team,
+            )
+            self.assertEqual(resumed.get_stage("Requirements Analyst"), "completed")
+            self.assertEqual(resumed.get_metadata("hr_transaction")["status"], "valid")
+
+    def test_checkpoint_rejects_unrelated_team_change_after_hr_transaction(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CHECKPOINT.json"
+            store = CheckpointStore(path, "request", "source", team_fingerprint="original")
+            store.record_stage("stage", "output")
+            store.set_metadata("hr_transaction", {
+                "status": "valid",
+                "registry": {},
+                "team_fingerprint_after": hashlib.sha256(b"expected").hexdigest(),
+            })
+            unrelated_team = hashlib.sha256(b"unrelated").hexdigest()
+            resumed = CheckpointStore(
+                path, "request", "source", team_fingerprint=unrelated_team,
+            )
+            self.assertIsNone(resumed.get_stage("stage"))
+
     def test_checkpoint_rejects_oversized_stage_output(self):
         with tempfile.TemporaryDirectory() as directory:
             store = CheckpointStore(Path(directory) / "CHECKPOINT.json", "r", "s")

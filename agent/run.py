@@ -49,7 +49,7 @@ REPOSITORY_EVIDENCE_FILES = [
     ".github/workflows/run-agent.yml",
     "tests/test_agent.py",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 40000
+MAX_REPOSITORY_CONTEXT_CHARS = 45000
 
 
 def read_repository_context():

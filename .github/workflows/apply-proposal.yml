@@ -1,0 +1,130 @@
+name: Apply Approved Patch Proposal
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorization:
+        description: "Choose APPLY_TO_BRANCH only after reviewing the latest patch proposal"
+        required: true
+        type: choice
+        default: REVIEW_ONLY
+        options:
+          - REVIEW_ONLY
+          - APPLY_TO_BRANCH
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  review-only:
+    if: github.event.inputs.authorization != 'APPLY_TO_BRANCH'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No changes authorized
+        run: echo "Review-only selected. No patch was applied and no branch was created."
+
+  apply:
+    if: github.event.inputs.authorization == 'APPLY_TO_BRANCH'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Verify one-run authorization and create isolated branch
+        env:
+          PATCH_AUTHORIZATION: ${{ inputs.authorization }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Dispatch must originate from main"
+            exit 1
+          fi
+          if [ "$PATCH_AUTHORIZATION" != "APPLY_TO_BRANCH" ]; then
+            echo "Explicit authorization missing"
+            exit 1
+          fi
+          echo "PATCH_BRANCH=agent-work/patch-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+          git switch -c "agent-work/patch-${GITHUB_RUN_ID}"
+      - name: Apply the validated proposal
+        env:
+          PATCH_AUTHORIZATION: ${{ inputs.authorization }}
+        run: python -m agent.apply_proposal
+      - name: Pull isolated Python runtime
+        run: |
+          for attempt in 1 2 3; do
+            if docker pull python:3.12-slim; then
+              exit 0
+            fi
+            echo "Image pull failed on attempt $attempt"
+            sleep $((attempt * 2))
+          done
+          echo "Could not obtain the isolated Python runtime"
+          exit 1
+      - name: Compile and test the proposed branch in a network-isolated container
+        env:
+          WORKSPACE_PATH: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --network none \
+            --cpus 1 \
+            --memory 2g \
+            --pids-limit 128 \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user 65532:65532 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+            --mount "type=bind,src=$WORKSPACE_PATH,dst=/workspace,readonly" \
+            --workdir /workspace \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            --env PYTHONUNBUFFERED=1 \
+            --env HOME=/tmp \
+            python:3.12-slim \
+            python -c "from pathlib import Path; import subprocess, sys; files=list(Path('agent').rglob('*.py'))+list(Path('tests').rglob('*.py')); [compile(p.read_text(encoding='utf-8'), str(p), 'exec') for p in files]; result=subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], check=False); sys.exit(result.returncode)"
+      - name: Check diff and commit only allowlisted source directories
+        run: |
+          git diff --check
+          git add -- agent/ tests/
+          if git diff --cached --quiet; then
+            echo "The approved proposal produced no changes"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Apply explicitly approved agent patch proposal"
+      - name: Push isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATCH_BRANCH: ${{ env.PATCH_BRANCH }}
+        run: |
+          gh auth setup-git
+          git push --set-upstream origin "$PATCH_BRANCH"
+      - name: Open draft pull request for human review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATCH_BRANCH: ${{ env.PATCH_BRANCH }}
+        run: |
+          gh pr create \
+            --draft \
+            --base main \
+            --head "$PATCH_BRANCH" \
+            --title "Approved agent patch ${GITHUB_RUN_ID}" \
+            --body "This draft PR was created after an explicit one-run APPLY_TO_BRANCH authorization. The patch was path-validated and the fixed test suite passed in a read-only, network-isolated container. Review the complete diff and checks before merging. No automatic merge or deployment is performed."
+      - name: Preserve uncommitted patch diff if execution fails
+        if: failure()
+        run: |
+          mkdir -p workspace
+          git diff --binary -- agent/ tests/ > workspace/FAILED_PATCH.diff || true
+      - name: Upload failed patch diff
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-agent-patch-${GITHUB_RUN_ID}
+          path: workspace/FAILED_PATCH.diff
+          if-no-files-found: warn
+          retention-days: 14

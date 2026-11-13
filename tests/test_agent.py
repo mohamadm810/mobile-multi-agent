@@ -667,5 +667,36 @@ class AgentGovernanceTests(unittest.TestCase):
         self.assertEqual(model, "gpt-4.1-mini")
 
 
+
+
+class IndependentProviderSafetyTests(unittest.TestCase):
+    def test_openai_text_content_parts_are_joined_with_real_newlines(self):
+        from agent.gemini import _extract_openai_text
+        result = _extract_openai_text({"choices": [{"message": {"content": [
+            {"type": "text", "text": "first"},
+            {"type": "image", "image_url": {}},
+            {"type": "text", "text": "second"},
+        ]}}]})
+        self.assertEqual(result, "first\\nsecond")
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-secret", "OPENAI_API_KEY": "openai-secret"})
+    def test_main_redacts_both_provider_keys_before_logging_or_persisting(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        from agent import run as run_module
+        captured = {}
+        def capture(error):
+            captured["error"] = error
+        with patch("agent.run.run_cycle", side_effect=RuntimeError(
+                "provider response leaked gemini-secret and openai-secret")), \
+             patch("agent.run.write_failure_state", side_effect=capture), \
+             redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                run_module.main()
+        self.assertNotIn("gemini-secret", captured["error"])
+        self.assertNotIn("openai-secret", captured["error"])
+        self.assertEqual(captured["error"].count("[REDACTED]"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

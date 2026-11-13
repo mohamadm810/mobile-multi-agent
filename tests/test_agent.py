@@ -191,7 +191,7 @@ class AtomicPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "STATE.json"
             target.write_text('{"status":"old"}', encoding="utf-8")
-            atomic_write_text(target, '{"status":"new"}\\n')
+            atomic_write_text(target, '{"status":"new"}\n')
             self.assertEqual(
                 json.loads(target.read_text(encoding="utf-8")),
                 {"status": "new"},

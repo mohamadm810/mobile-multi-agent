@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -111,6 +112,26 @@ def run_preflight(root=ROOT, environ=None):
 
 def main():
     result = run_preflight()
+    result["checked_at_utc"] = datetime.now(timezone.utc).isoformat()
+    workspace = ROOT / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    report_path = workspace / "PREFLIGHT.json"
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=workspace,
+            prefix=".PREFLIGHT.", suffix=".tmp", delete=False
+        ) as handle:
+            temporary_path = Path(handle.name)
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, report_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(0 if result["status"] == "ready" else 1)
 

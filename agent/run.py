@@ -185,13 +185,13 @@ def run_cycle(request=None, generator=generate):
     now = datetime.now(timezone.utc).isoformat()
     for role_name, role_output in outputs.items():
         role_output = re.sub(
-            r"\\b\\d+\\s+unit test methods?\\b",
+            r"\b\d+\s+unit test methods?\b",
             f"{len(unit_test_methods)} unit test methods",
             role_output,
             flags=re.IGNORECASE,
         )
         role_output = re.sub(
-            r"\\b\\d+\\s+unit tests\\b",
+            r"\b\d+\s+unit tests\b",
             f"{len(unit_test_methods)} unit tests",
             role_output,
             flags=re.IGNORECASE,

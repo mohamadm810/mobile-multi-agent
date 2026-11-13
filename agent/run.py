@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ from pathlib import Path
 from .config import MAX_REQUEST_CHARS
 from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
+from .resilience import CheckpointStore, call_with_retries
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace"
@@ -79,6 +81,24 @@ def read_repository_context():
         sections.append(chunk)
         remaining -= len(chunk)
     return "\n".join(sections)
+
+
+def repository_fingerprint():
+    """Hash source evidence so checkpoints never cross code revisions."""
+    digest = hashlib.sha256()
+    for relative_path in REPOSITORY_EVIDENCE_FILES:
+        path = ROOT / relative_path
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_bytes()
+        except OSError:
+            continue
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\\0")
+        digest.update(content)
+        digest.update(b"\\0")
+    return digest.hexdigest()
 
 
 def get_unit_test_inventory():
@@ -292,7 +312,16 @@ def run_cycle(request=None, generator=generate):
         + "Names: " + ", ".join(unit_test_methods) + ". "
         + "Use this exact count and list; do not estimate, omit tests, or claim the test file is absent."
     )
-    outputs = {}
+    checkpoint = CheckpointStore(
+        WORKSPACE / "CHECKPOINT.json",
+        hashlib.sha256(request.encode("utf-8")).hexdigest(),
+        repository_fingerprint(),
+    )
+    outputs = {
+        key: value for key, value in checkpoint.outputs.items()
+        if key != "__hr_output__"
+    }
+    resumed_stages = list(outputs)
     registry = read_team_registry()
     custom_agents = registry["custom_agents"]
     role_metrics = {}
@@ -306,6 +335,8 @@ def run_cycle(request=None, generator=generate):
         "Documentation Agent": ["Software Architect", "Independent Tester", "Independent Reviewer", "Central Supervisor"],
     }
     for name, role in STAGES:
+        if name in outputs:
+            continue
         if name in registry["disabled_agents"]:
             continue
         role = registry["role_overrides"].get(name, role)
@@ -333,7 +364,8 @@ def run_cycle(request=None, generator=generate):
             + runtime_evidence
         )
         started = __import__("time").perf_counter()
-        outputs[name] = generator(role, prompt)
+        outputs[name] = call_with_retries(lambda: generator(role, prompt))
+        checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
             "output_characters": len(outputs[name]),
@@ -342,6 +374,8 @@ def run_cycle(request=None, generator=generate):
 
     for custom in custom_agents:
         name = custom["name"]
+        if name in outputs:
+            continue
         started = __import__("time").perf_counter()
         custom_prompt = (
             context + "\n\nCUSTOM AGENT MISSION: " + custom["mission"]
@@ -350,7 +384,8 @@ def run_cycle(request=None, generator=generate):
             + "\n\nPRIOR TEAM OUTPUTS:\n"
             + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
         )
-        outputs[name] = generator(custom["prompt"], custom_prompt)
+        outputs[name] = call_with_retries(lambda: generator(custom["prompt"], custom_prompt))
+        checkpoint.record_stage(name, outputs[name])
         role_metrics[name] = {
             "duration_seconds": round(__import__("time").perf_counter() - started, 3),
             "output_characters": len(outputs[name]),
@@ -369,7 +404,10 @@ def run_cycle(request=None, generator=generate):
         "Any manager concern must be a recommendation for human approval."
     )
     hr_started = __import__("time").perf_counter()
-    hr_output = generator(HR, hr_prompt)
+    hr_output = checkpoint.get_stage("__hr_output__")
+    if hr_output is None:
+        hr_output = call_with_retries(lambda: generator(HR, hr_prompt))
+        checkpoint.record_stage("__hr_output__", hr_output)
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
     try:
         hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
@@ -447,6 +485,7 @@ def run_cycle(request=None, generator=generate):
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",
     }
     atomic_write_text(STATE_FILE, json.dumps(new_state, ensure_ascii=False, indent=2) + "\n")
+    checkpoint.clear()
     return outputs
 
 
@@ -454,11 +493,21 @@ def run_cycle(request=None, generator=generate):
 def write_failure_state(error):
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     state = read_state()
+    checkpoint_path = WORKSPACE / "CHECKPOINT.json"
+    completed = []
+    try:
+        checkpoint_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        if isinstance(checkpoint_data, dict) and isinstance(checkpoint_data.get("outputs"), dict):
+            completed = [name for name in checkpoint_data["outputs"] if name != "__hr_output__"]
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
     state.update({
         "status": "failed",
+        "completed_agents": completed,
+        "checkpoint_available": checkpoint_path.is_file(),
         "last_run_utc": datetime.now(timezone.utc).isoformat(),
         "last_error": str(error)[:1500],
-        "next_step": "Review the Actions log, resolve the reported issue, then rerun the workflow.",
+        "next_step": "Rerun the workflow; matching request/source checkpoints will resume completed stages automatically.",
     })
     atomic_write_text(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 

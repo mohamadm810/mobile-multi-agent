@@ -2,7 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from unittest.mock import patch\n\nfrom agent.preflight import main, run_preflight
+from unittest.mock import patch
+
+from agent.preflight import main, run_preflight
 
 
 class PreflightTests(unittest.TestCase):

@@ -38,14 +38,14 @@ ACTIVE_MODEL = MODEL
 def _extract_text(data):
     candidates = data.get("candidates") if isinstance(data, dict) else None
     if not isinstance(candidates, list) or not candidates:
-        raise AgentError("Gemini returned no candidates.")
+        raise AgentError("Gemini returned no candidates.", retryable=True)
     candidate = candidates[0]
     if not isinstance(candidate, dict):
-        raise AgentError("Gemini returned a malformed candidate.")
+        raise AgentError("Gemini returned a malformed candidate.", retryable=True)
     content = candidate.get("content", {})
     parts = content.get("parts", []) if isinstance(content, dict) else []
     if not isinstance(parts, list):
-        raise AgentError("Gemini returned malformed content parts.")
+        raise AgentError("Gemini returned malformed content parts.", retryable=True)
     chunks = [
         part.get("text", "")
         for part in parts
@@ -53,7 +53,7 @@ def _extract_text(data):
     ]
     result = "\n".join(chunk for chunk in chunks if chunk.strip()).strip()
     if not result:
-        raise AgentError("Gemini returned an empty or non-text response.")
+        raise AgentError("Gemini returned an empty or non-text response.", retryable=True)
     return result
 
 
@@ -111,7 +111,7 @@ def _generate_with_model(model, payload, key):
             ) from None
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise AgentError(
-                f"Gemini returned an invalid response on {model}: {type(exc).__name__}"
+                f"Gemini returned an invalid response on {model}: {type(exc).__name__}", retryable=True
             ) from None
     raise AgentError(f"Gemini API request failed on {model} after retries.")
 

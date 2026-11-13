@@ -20,6 +20,9 @@ jobs:
           unzip -q mobile_multi_agent_ready_to_upload.zip -d /tmp/project-archive
           test -d /tmp/project-archive/mobile_multi_agent
           cp -a /tmp/project-archive/mobile_multi_agent/. .
+          # Workflow files are installed separately because the Actions token cannot
+          # create or update workflow files without the dedicated workflows scope.
+          rm -f .github/workflows/run-agent.yml .github/workflows/tests.yml
           rm mobile_multi_agent_ready_to_upload.zip
       - name: Commit extracted project
         run: |

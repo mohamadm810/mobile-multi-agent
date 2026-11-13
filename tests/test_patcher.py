@@ -135,6 +135,41 @@ class PatchPreparationTests(unittest.TestCase):
             self.assertEqual(changed, ["agent/example.py"])
             self.assertEqual(target.read_text(encoding="utf-8"), "keep\nnew\n")
 
+    def test_persist_patch_proposal_accepts_only_validated_json(self):
+        import json
+        from agent.run import persist_patch_proposal
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "PATCH_PROPOSAL.json"
+            output = "Plan complete.\\nPATCH_PROPOSAL_JSON:\\n" + json.dumps(proposal())
+            status = persist_patch_proposal(output, path)
+            self.assertEqual(status["status"], "validated")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["version"], 1)
+
+    def test_persist_patch_proposal_rejects_unsafe_output_and_clears_stale_file(self):
+        from agent.run import persist_patch_proposal
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "PATCH_PROPOSAL.json"
+            path.write_text("stale", encoding="utf-8")
+            unsafe = "PATCH_PROPOSAL_JSON:\\n" + __import__("json").dumps(proposal(path="../outside.py"))
+            status = persist_patch_proposal(unsafe, path)
+            self.assertEqual(status["status"], "rejected")
+            self.assertFalse(path.exists())
+
+    def test_apply_proposal_requires_manual_dispatch_from_main(self):
+        import os
+        from unittest.mock import patch
+        from agent.apply_proposal import main
+
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REF": "refs/heads/main",
+            "PATCH_AUTHORIZATION": "APPLY_TO_BRANCH",
+        }, clear=True):
+            with self.assertRaisesRegex(PatchSpecError, "manual workflow dispatch"):
+                main()
+
     def test_rejects_missing_target_file(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(PatchSpecError, "existing file"):

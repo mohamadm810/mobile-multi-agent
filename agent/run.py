@@ -290,11 +290,11 @@ def run_cycle(request=None, generator=generate):
         name = custom["name"]
         started = __import__("time").perf_counter()
         custom_prompt = (
-            context + "\\n\\nCUSTOM AGENT MISSION: " + custom["mission"]
-            + "\\n\\nRun the specialist task using only the evidence and user request. "
+            context + "\n\\nCUSTOM AGENT MISSION: " + custom["mission"]
+            + "\n\\nRun the specialist task using only the evidence and user request. "
             "Return concise findings with evidence, uncertainty, and actionable recommendations."
-            + "\\n\\nPRIOR TEAM OUTPUTS:\\n"
-            + "\\n\\n".join(f"## {key}\\n{value[:2500]}" for key, value in outputs.items())
+            + "\n\\nPRIOR TEAM OUTPUTS:\n"
+            + "\n\n".join(f"## {key}\\n{value[:2500]}" for key, value in outputs.items())
         )
         outputs[name] = generator(custom["prompt"], custom_prompt)
         role_metrics[name] = {
@@ -304,13 +304,13 @@ def run_cycle(request=None, generator=generate):
         }
 
     hr_prompt = (
-        context + "\\n\\nTEAM ROSTER (custom agents only):\\n"
+        context + "\n\\nTEAM ROSTER (custom agents only):\n"
         + json.dumps(custom_agents, ensure_ascii=False)[:8000]
-        + "\\n\\nPERFORMANCE METRICS (latency and output size; not quality scores):\\n"
+        + "\n\\nPERFORMANCE METRICS (latency and output size; not quality scores):\n"
         + json.dumps(role_metrics, ensure_ascii=False)
-        + "\\n\\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\\n"
-        + "\\n\\n".join(f"## {key}\\n{value[:2500]}" for key, value in outputs.items())
-        + "\\n\\nReturn the required strict JSON. Apply changes only to custom agents. "
+        + "\n\\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\n"
+        + "\n\n".join(f"## {key}\\n{value[:2500]}" for key, value in outputs.items())
+        + "\n\\nReturn the required strict JSON. Apply changes only to custom agents. "
         "Any manager concern must be a recommendation for human approval."
     )
     hr_output = generator(HR, hr_prompt)
@@ -323,18 +323,18 @@ def run_cycle(request=None, generator=generate):
         hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
         hr_status = "rejected"
     outputs["Agent Recruitment & Governance"] = (
-        "### HR decision\\n" + str(hr_decision.get("summary", "No summary supplied."))
-        + "\\n\\n### Manager review\\n" + str(hr_decision.get("manager_review", "none"))
-        + "\\n\\n### Applied staffing actions\\n"
-        + ("\\n".join("- " + item for item in hr_applied) if hr_applied else "- No staffing changes.")
-        + "\\n\\n### HR response status\\n" + hr_status
+        "### HR decision\n" + str(hr_decision.get("summary", "No summary supplied."))
+        + "\n\\n### Manager review\n" + str(hr_decision.get("manager_review", "none"))
+        + "\n\\n### Applied staffing actions\n"
+        + ("\n".join("- " + item for item in hr_applied) if hr_applied else "- No staffing changes.")
+        + "\n\\n### HR response status\n" + hr_status
     )
     role_metrics["Agent Recruitment & Governance"] = {
         "status": "success" if hr_status == "valid" else "rejected",
         "output_characters": len(hr_output),
     }
     if hr_status == "valid" and (hr_applied or not TEAM_FILE.exists()):
-        atomic_write_text(TEAM_FILE, json.dumps(registry, ensure_ascii=False, indent=2) + "\\n")
+        atomic_write_text(TEAM_FILE, json.dumps(registry, ensure_ascii=False, indent=2) + "\n")
 
     now = datetime.now(timezone.utc).isoformat()
     for role_name, role_output in outputs.items():
@@ -373,7 +373,8 @@ def run_cycle(request=None, generator=generate):
         "request_snapshot": request[:5000],
         "status": "planning_review_required",
         "last_report": "workspace/REPORT.md",
-        "completed_agents": list(outputs.keys()),\n        "role_metrics": role_metrics,\n        "team_registry": "workspace/TEAM.json",\n        "active_custom_agents": [item["name"] for item in registry["custom_agents"]],\n        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],\n        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
+        "completed_agents": list(outputs.keys()),
+        "role_metrics": role_metrics,\n        "team_registry": "workspace/TEAM.json",\n        "active_custom_agents": [item["name"] for item in registry["custom_agents"]],\n        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],\n        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
         "models_used": models_used,
         "models_attempted": models_attempted,
         "unit_test_methods": unit_test_methods,

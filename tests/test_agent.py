@@ -335,14 +335,15 @@ class OrchestrationTests(unittest.TestCase):
                     "test request",
                     generator=lambda role, prompt: prompts.append((role, prompt)) or "ok",
                 )
-            self.assertEqual(len(outputs), 7)
-            docs_prompt = prompts[-1][1]
+            self.assertEqual(len(outputs), 8)
+            docs_prompt = prompts[-2][1]
             self.assertIn("LIVE EXECUTION EVIDENCE", docs_prompt)
             self.assertIn("Source contains", docs_prompt)
             self.assertIn("test_documentation_agent_receives_deterministic_run_evidence", docs_prompt)
             self.assertTrue((root / "REPORT.md").is_file())
             saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
-            self.assertEqual(len(saved_state["completed_agents"]), 7)
+            self.assertEqual(len(saved_state["completed_agents"]), 8)
+            self.assertEqual(saved_state["hr_status"], "rejected")
 
 
 class ConfigValidationTests(unittest.TestCase):
@@ -404,6 +405,72 @@ class RequestValidationTests(unittest.TestCase):
         from agent.run import run_cycle
         with self.assertRaises(AgentError):
             run_cycle("x" * 12001, generator=lambda *_: "ok")
+
+
+class AgentGovernanceTests(unittest.TestCase):
+    def test_hr_can_hire_custom_agent_for_next_cycle(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": []}
+        prompt = "You are a specialist. " + ("Follow evidence and report findings. " * 3)
+        payload = json.dumps({
+            "summary": "A recurring need requires a specialist.",
+            "manager_review": "none",
+            "actions": [{"action": "hire", "name": "ASTM Specialist",
+                         "mission": "Review ASTM method requirements and evidence.",
+                         "prompt": prompt}],
+        })
+        decision, applied = apply_hr_decisions(payload, registry)
+        self.assertEqual(len(registry["custom_agents"]), 1)
+        self.assertEqual(registry["custom_agents"][0]["name"], "ASTM Specialist")
+        self.assertIn("next cycle", applied[0])
+
+    def test_hr_can_retire_custom_agent_and_archive_record(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [{
+            "name": "Old Specialist", "mission": "Old task",
+            "prompt": "A sufficiently long prompt " + ("with clear instructions " * 3),
+        }], "archived_agents": []}
+        payload = json.dumps({
+            "summary": "Role overlap is evidenced.",
+            "manager_review": "none",
+            "actions": [{"action": "retire", "name": "Old Specialist",
+                         "reason": "Its duties duplicate the independent reviewer."}],
+        })
+        _, applied = apply_hr_decisions(payload, registry)
+        self.assertEqual(registry["custom_agents"], [])
+        self.assertEqual(registry["archived_agents"][0]["name"], "Old Specialist")
+        self.assertIn("archived", applied[0])
+
+    def test_hr_cannot_change_central_supervisor(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": []}
+        payload = json.dumps({
+            "actions": [{"action": "retire", "name": "Central Supervisor",
+                         "reason": "The manager seems inefficient."}],
+        })
+        with self.assertRaisesRegex(ValueError, "protected core roles"):
+            apply_hr_decisions(payload, registry)
+
+    def test_hr_rejects_too_many_staffing_actions(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": []}
+        payload = json.dumps({"actions": [
+            {"action": "hire", "name": "Specialist One", "mission": "One specialist role",
+             "prompt": "A sufficiently long prompt " + ("with instructions " * 4)},
+            {"action": "hire", "name": "Specialist Two", "mission": "Another specialist role",
+             "prompt": "A sufficiently long prompt " + ("with instructions " * 4)},
+            {"action": "hire", "name": "Specialist Three", "mission": "Third specialist role",
+             "prompt": "A sufficiently long prompt " + ("with instructions " * 4)},
+        ]})
+        with self.assertRaisesRegex(ValueError, "action limit"):
+            apply_hr_decisions(payload, registry)
+
+    def test_hr_rejects_invalid_json_without_changes(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": []}
+        with self.assertRaises(json.JSONDecodeError):
+            apply_hr_decisions("not json", registry)
+        self.assertEqual(registry["custom_agents"], [])
 
 
 if __name__ == "__main__":

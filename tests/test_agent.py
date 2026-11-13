@@ -92,13 +92,13 @@ class GeminiResponseTests(unittest.TestCase):
             gemini.ATTEMPTED_MODELS.clear()
             with self.assertRaises(AgentError) as caught:
                 generate("role", "prompt")
+            self.assertEqual(gemini.ACTIVE_MODEL, "primary-model")
 
         self.assertIn("HTTP 503 on fallback-model", str(caught.exception))
         self.assertNotIn("test-key", str(caught.exception))
         self.assertEqual(mocked_urlopen.call_count, 6)
         self.assertEqual(gemini.ATTEMPTED_MODELS, ["primary-model", "fallback-model"])
         self.assertEqual(gemini.USED_MODELS, [])
-        self.assertEqual(gemini.ACTIVE_MODEL, "primary-model")
 
 
     def test_reset_run_tracking_clears_models_and_restores_primary(self):

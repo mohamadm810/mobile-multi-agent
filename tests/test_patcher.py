@@ -95,7 +95,7 @@ class UnifiedDiffTests(unittest.TestCase):
         self.assertEqual(apply_unified_diff("second\n", diff, "agent/example.py"), "first\nsecond\n")
 
 
-class PatchApplicationTests(unittest.TestCase):
+class PatchPreparationTests(unittest.TestCase):
     def test_prepares_patch_without_mutating_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -119,7 +119,7 @@ class PatchApplicationTests(unittest.TestCase):
             outside.write_text("keep\nold\n", encoding="utf-8")
             (root / "agent" / "example.py").symlink_to(outside)
             with self.assertRaisesRegex(PatchSpecError, "Symbolic-link"):
-                apply_patch_spec(root, proposal())
+                prepare_patch_spec(root, proposal())
 
 
 if __name__ == "__main__":

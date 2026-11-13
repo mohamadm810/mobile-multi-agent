@@ -118,6 +118,7 @@ class CheckpointStore:
         self.stage_records = {}
         self.created_at = None
         self.updated_at = None
+        self.resumed_from_run_id = None
         self._load()
 
     @staticmethod
@@ -135,7 +136,6 @@ class CheckpointStore:
             return
         if (data.get("request_fingerprint") != self.request_fingerprint
                 or data.get("source_fingerprint") != self.source_fingerprint
-                or data.get("run_id") != self.run_id
                 or data.get("team_fingerprint") != self.team_fingerprint):
             return
         supplied_checksum = data.get("checksum")
@@ -169,6 +169,7 @@ class CheckpointStore:
         self.stage_records = records
         self.created_at = data.get("created_at")
         self.updated_at = data.get("updated_at")
+        self.resumed_from_run_id = data.get("run_id")
 
     def _save(self):
         now = self.clock()

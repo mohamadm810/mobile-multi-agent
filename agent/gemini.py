@@ -1,3 +1,4 @@
+import http.client
 import json
 import os
 import time
@@ -38,7 +39,10 @@ def _extract_text(data):
     candidates = data.get("candidates") if isinstance(data, dict) else None
     if not isinstance(candidates, list) or not candidates:
         raise AgentError("Gemini returned no candidates.")
-    content = candidates[0].get("content", {})
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        raise AgentError("Gemini returned a malformed candidate.")
+    content = candidate.get("content", {})
     parts = content.get("parts", []) if isinstance(content, dict) else []
     chunks = [
         part.get("text", "")
@@ -94,7 +98,7 @@ def _generate_with_model(model, payload, key):
             ) from None
         except AgentError:
             raise
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
             if attempt < MAX_ATTEMPTS_PER_MODEL - 1:
                 time.sleep(_retry_delay(None, attempt + 1))
                 continue

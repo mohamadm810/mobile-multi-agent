@@ -132,12 +132,13 @@ def _generate_with_model(model, payload, key):
 
 
 def _openai_endpoint():
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1"
+    base_url = base_url.rstrip("/")
     parsed = urlparse(base_url)
     if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password
             or parsed.query or parsed.fragment):
         raise AgentError("OPENAI_BASE_URL must be an HTTPS base URL without credentials, query, or fragment.")
-    model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini").strip()
+    model = os.environ.get("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"
     if not model or len(model) > 120 or any(ord(char) < 32 for char in model):
         raise AgentError("OPENAI_MODEL is invalid.")
     return f"{base_url}/chat/completions", model

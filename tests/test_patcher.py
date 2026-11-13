@@ -142,9 +142,14 @@ class ProposalFreshnessTests(unittest.TestCase):
 
     def test_rejects_proposal_tampering(self):
         altered = proposal()
-        altered["changes"][0]["unified_diff"] = (
-            "--- a/agent/example.py\\n+++ b/agent/example.py\\n@@ -1 +1 @@\\n-old\\n+altered\\n"
-        )
+        altered["changes"][0]["unified_diff"] = "\\n".join([
+            "--- a/agent/example.py",
+            "+++ b/agent/example.py",
+            "@@ -1 +1 @@",
+            "-old",
+            "+altered",
+            "",
+        ])
         with self.assertRaisesRegex(PatchSpecError, "changed after it was reviewed"):
             self.verify(self.state, altered, self.request, self.source)
 

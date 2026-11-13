@@ -313,6 +313,28 @@ class FailureStateTests(unittest.TestCase):
             self.assertEqual(saved["status"], "failed")
             self.assertIn("HTTP 503", saved["last_error"])
 
+    @patch.dict(os.environ, {
+        "GEMINI_API_KEY": "gemini-private-test",
+        "OPENAI_API_KEY": "openai-private-test",
+    })
+    def test_failure_state_redacts_provider_keys_before_persisting(self):
+        from agent.run import write_failure_state
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = root / "STATE.json"
+            with patch("agent.run.WORKSPACE", root / "workspace"), patch(
+                "agent.run.STATE_FILE", state_path
+            ), patch("agent.run.REQUEST_FILE", root / "missing-request.md"), patch(
+                "agent.run.TEAM_FILE", root / "TEAM.json"
+            ):
+                write_failure_state(RuntimeError(
+                    "unexpected gemini-private-test and openai-private-test"
+                ))
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertNotIn("gemini-private-test", saved["last_error"])
+            self.assertNotIn("openai-private-test", saved["last_error"])
+            self.assertEqual(saved["last_error"].count("[REDACTED]"), 2)
+
     @patch.dict(os.environ, {"GEMINI_API_KEY": "private-test-secret"})
     @patch("agent.run.write_failure_state")
     @patch("agent.run.run_cycle", side_effect=ValueError("unexpected private-test-secret"))

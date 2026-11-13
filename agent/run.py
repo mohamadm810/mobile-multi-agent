@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import MAX_REQUEST_CHARS
-from .gemini import AgentError, USED_MODELS, generate
+from .gemini import AgentError, USED_MODELS, generate, reset_run_tracking
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, MANAGER, REVIEWER, TESTER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +46,7 @@ REPOSITORY_EVIDENCE_FILES = [
     "tests/test_agent.py",
     "README_FA.md",
 ]
-MAX_REPOSITORY_CONTEXT_CHARS = 28000
+MAX_REPOSITORY_CONTEXT_CHARS = 20000
 
 
 def read_repository_context():
@@ -79,6 +79,7 @@ def read_state():
 
 
 def run_cycle(request=None, generator=generate):
+    reset_run_tracking()
     request = read_request() if request is None else request.strip()
     if not request or len(request) > MAX_REQUEST_CHARS:
         raise AgentError("Request is empty or exceeds the configured size limit.")
@@ -96,17 +97,38 @@ def run_cycle(request=None, generator=generate):
         "Distinguish source-level implementation, unit-test simulation, and behavior observed in this live run."
     )
     outputs = {}
+    prior_for_stage = {
+        "Requirements Analyst": [],
+        "Software Architect": ["Requirements Analyst"],
+        "Developer Planner": ["Requirements Analyst", "Software Architect"],
+        "Independent Tester": ["Requirements Analyst", "Developer Planner"],
+        "Independent Reviewer": ["Requirements Analyst", "Software Architect", "Developer Planner", "Independent Tester"],
+        "Central Supervisor": ["Requirements Analyst", "Software Architect", "Developer Planner", "Independent Tester", "Independent Reviewer"],
+        "Documentation Agent": ["Software Architect", "Independent Tester", "Independent Reviewer", "Central Supervisor"],
+    }
     for name, role in STAGES:
-        prior = "\n\n".join(f"## {key}\n{value}" for key, value in outputs.items())
-        prompt = context + "\n\nPREVIOUS AGENT OUTPUTS:\n" + prior[-22000:]
+        selected = prior_for_stage[name]
+        prior = "\\n\\n".join(
+            f"## {key}\\n{outputs[key][:3500]}" for key in selected if key in outputs
+        )
+        prompt = (
+            context
+            + "\\n\\nYOUR ROLE FOR THIS STEP: " + name
+            + "\\nReturn only your role's deliverable. Do not write sections for other roles, "
+              "do not copy prior outputs, and obey the word limit in your role instructions."
+            + ("\\n\\nRELEVANT PRIOR FINDINGS (reference only; do not repeat):\\n" + prior if prior else "")
+        )
         outputs[name] = generator(role, prompt)
 
     now = datetime.now(timezone.utc).isoformat()
+    models_used = list(USED_MODELS)
     report = [
         "# گزارش اجرای تیم ایجنت",
-        f"\nزمان اجرا (UTC): `{now}`",
-        "\n> این گزارش تحلیل و برنامه‌ریزی مدل است؛ اجرای واقعی کد یا تست پروژه انجام نشده است.",
-        f"\nمدل(های) استفاده‌شده: `{', '.join(USED_MODELS) or __import__('os').getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')}`",
+        f"\\nزمان اجرا (UTC): `{now}`",
+        f"\\nشناسه اجرای GitHub: `{__import__('os').getenv('GITHUB_RUN_ID', 'local')}`",
+        f"\\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
+        "\\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
+        f"\\nمدل(های) واقعاً استفاده‌شده: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
     for name, output in outputs.items():
         report.extend([f"\n\n---\n\n## {name}\n\n{output}"])
@@ -119,6 +141,9 @@ def run_cycle(request=None, generator=generate):
         "status": "planning_review_required",
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
+        "models_used": models_used,
+        "github_run_id": __import__("os").getenv("GITHUB_RUN_ID"),
+        "github_sha": __import__("os").getenv("GITHUB_SHA"),
         "next_step": "Review the report, approve decisions, update REQUEST.md, then run again.",
     }
     STATE_FILE.write_text(json.dumps(new_state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

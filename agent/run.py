@@ -136,7 +136,7 @@ CORE_AGENT_NAMES = {name for name, _ in STAGES} | {"Agent Recruitment & Governan
 def read_team_registry():
     """Load only validated custom-agent definitions; never override protected core roles."""
     if not TEAM_FILE.is_file():
-        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
+        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
     try:
         data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -165,6 +165,9 @@ def read_team_registry():
     data["role_overrides"] = {key: value for key, value in overrides.items()
                               if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
                               and isinstance(value, str) and 50 <= len(value) <= 4000}
+    disabled = data.get("disabled_agents", [])
+    data["disabled_agents"] = sorted({name for name in disabled if isinstance(name, str)
+                                      and name in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}}) if isinstance(disabled, list) else []
     archived = data.get("archived_agents", [])
     data["archived_agents"] = [item for item in archived if isinstance(item, dict)][-50:] if isinstance(archived, list) else []
     return data
@@ -190,6 +193,7 @@ def apply_hr_decisions(output, registry):
     applied, archived = [], registry.setdefault("archived_agents", [])
     active = registry.setdefault("custom_agents", [])
     overrides = registry.setdefault("role_overrides", {})
+    disabled = registry.setdefault("disabled_agents", [])
     for action in actions:
         if not isinstance(action, dict):
             raise ValueError("Malformed HR staffing action.")
@@ -227,19 +231,38 @@ def apply_hr_decisions(output, registry):
             active.append({"name": name.strip(), "mission": mission.strip(), "prompt": prompt})
             applied.append(f"Hired {name}; it will join the next cycle.")
         elif kind == "retire":
-            if existing is None:
-                raise ValueError("Only an active custom agent can be retired.")
             reason = action.get("reason")
             if not isinstance(reason, str) or len(reason.strip()) < 8:
                 raise ValueError("Retirement requires an evidence-based reason.")
-            active.remove(existing)
-            archived.append({"name": name, "mission": existing["mission"],
-                             "reason": reason.strip(), "archived_utc": datetime.now(timezone.utc).isoformat()})
-            applied.append(f"Retired {name}; its record was archived.")
+            if existing is not None:
+                active.remove(existing)
+                archived.append({"name": name, "mission": existing["mission"], "prompt": existing["prompt"],
+                                 "kind": "custom", "reason": reason.strip(),
+                                 "archived_utc": datetime.now(timezone.utc).isoformat()})
+            elif name in CORE_AGENT_NAMES and name not in disabled:
+                disabled.append(name)
+                archived.append({"name": name, "kind": "core", "reason": reason.strip(),
+                                 "archived_utc": datetime.now(timezone.utc).isoformat()})
+            else:
+                raise ValueError("Only an active non-manager agent can be retired.")
+            applied.append(f"Retired {name}; it is disabled and its record was archived.")
+        elif kind == "restore":
+            if name in disabled:
+                disabled.remove(name)
+                applied.append(f"Restored core role {name}; it will run next cycle.")
+            else:
+                archived_item = next((item for item in reversed(archived)
+                                      if item.get("name") == name and item.get("kind") == "custom"), None)
+                if archived_item is None or len(active) >= MAX_CUSTOM_AGENTS:
+                    raise ValueError("No restorable archived agent or custom-agent capacity is full.")
+                active.append({"name": name, "mission": archived_item["mission"], "prompt": archived_item["prompt"]})
+                archived.remove(archived_item)
+                applied.append(f"Restored custom agent {name}; it will run next cycle.")
         else:
             raise ValueError("Unsupported HR action.")
     registry["archived_agents"] = archived[-50:]
     registry["role_overrides"] = overrides
+    registry["disabled_agents"] = sorted(set(disabled))
     return decision, applied
 
 
@@ -283,6 +306,8 @@ def run_cycle(request=None, generator=generate):
         "Documentation Agent": ["Software Architect", "Independent Tester", "Independent Reviewer", "Central Supervisor"],
     }
     for name, role in STAGES:
+        if name in registry["disabled_agents"]:
+            continue
         role = registry["role_overrides"].get(name, role)
         selected = prior_for_stage[name]
         prior = "\n\n".join(
@@ -291,7 +316,7 @@ def run_cycle(request=None, generator=generate):
         runtime_evidence = ""
         if name == "Documentation Agent":
             runtime_evidence = (
-                "\n\nLIVE EXECUTION EVIDENCE: The preceding six role calls in this cycle "
+                "\n\nLIVE EXECUTION EVIDENCE: The preceding role calls in this cycle "
                 "returned successfully from the Gemini API. Successful response model(s): "
                 + (", ".join(USED_MODELS) or "none recorded")
                 + ". Attempted model(s): " + (", ".join(ATTEMPTED_MODELS) or "none recorded")
@@ -409,6 +434,7 @@ def run_cycle(request=None, generator=generate):
         "role_metrics": role_metrics,
         "team_registry": "workspace/TEAM.json",
         "active_custom_agents": [item["name"] for item in registry["custom_agents"]],
+        "disabled_core_agents": registry["disabled_agents"],
         "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],
         "hr_status": hr_status,
         "hr_manager_review": hr_decision.get("manager_review", "none"),

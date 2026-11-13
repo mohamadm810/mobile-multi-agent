@@ -444,11 +444,12 @@ def run_cycle(request=None, generator=generate):
         except Exception as exc:
             # The Central Supervisor is the coordination authority: without it,
             # fail closed. Other roles are isolated so useful work can continue.
-            if name == "Central Supervisor":
+            failure_policy = classify_failure(exc)
+            if name == "Central Supervisor" or not failure_policy["retryable"]:
                 journal.record("stage_failed", stage=name, status="critical_failure",
                                error_type=type(exc).__name__)
                 raise
-            category = classify_failure(exc)["category"]
+            category = failure_policy["category"]
             failed_agents.append(name)
             upstream_degraded = True
             role_metrics[name] = {
@@ -496,7 +497,12 @@ def run_cycle(request=None, generator=generate):
                 max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
             )
         except Exception as exc:
-            category = classify_failure(exc)["category"]
+            failure_policy = classify_failure(exc)
+            if not failure_policy["retryable"]:
+                journal.record("stage_failed", stage=name, status="non_retryable_failure",
+                               error_type=type(exc).__name__)
+                raise
+            category = failure_policy["category"]
             failed_agents.append(name)
             upstream_degraded = True
             outputs[name] = (
@@ -560,7 +566,12 @@ def run_cycle(request=None, generator=generate):
                 )
                 checkpoint.record_stage("__hr_output__", hr_output)
             except Exception as exc:
-                category = classify_failure(exc)["category"]
+                failure_policy = classify_failure(exc)
+                if not failure_policy["retryable"]:
+                    journal.record("stage_failed", stage="Agent Recruitment & Governance",
+                                   status="non_retryable_failure", error_type=type(exc).__name__)
+                    raise
+                category = failure_policy["category"]
                 failed_agents.append("Agent Recruitment & Governance")
                 upstream_degraded = True
                 hr_status = "unavailable"

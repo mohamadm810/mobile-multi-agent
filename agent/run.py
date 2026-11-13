@@ -136,13 +136,13 @@ CORE_AGENT_NAMES = {name for name, _ in STAGES} | {"Agent Recruitment & Governan
 def read_team_registry():
     """Load only validated custom-agent definitions; never override protected core roles."""
     if not TEAM_FILE.is_file():
-        return {"version": 1, "custom_agents": [], "archived_agents": []}
+        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
     try:
         data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"version": 1, "custom_agents": [], "archived_agents": []}
+        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
     if not isinstance(data, dict) or not isinstance(data.get("custom_agents"), list):
-        return {"version": 1, "custom_agents": [], "archived_agents": []}
+        return {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
     active, seen = [], set()
     for item in data["custom_agents"]:
         if not isinstance(item, dict):

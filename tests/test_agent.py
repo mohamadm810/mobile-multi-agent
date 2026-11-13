@@ -722,3 +722,42 @@ class IndependentProviderSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AgentFailureIsolationPolicyTests(unittest.TestCase):
+    def test_transient_provider_failure_is_recoverable(self):
+        from agent.run import classify_failure
+        error = AgentError("HTTP 503: temporarily unavailable")
+        policy = classify_failure(error)
+        self.assertEqual(policy["category"], "transient_dependency")
+        self.assertTrue(policy["retryable"])
+        self.assertEqual(policy["strategy"], "checkpoint_resume")
+
+    def test_authentication_failure_is_not_retried_or_isolated(self):
+        from agent.run import classify_failure
+        error = AgentError("HTTP 403: forbidden")
+        policy = classify_failure(error)
+        self.assertEqual(policy["category"], "security_or_permission")
+        self.assertFalse(policy["retryable"])
+        self.assertEqual(policy["strategy"], "human_review")
+
+    def test_unknown_failure_fails_closed(self):
+        from agent.run import classify_failure
+        policy = classify_failure(RuntimeError("unexpected parser defect"))
+        self.assertEqual(policy["category"], "unknown")
+        self.assertFalse(policy["retryable"])
+
+    def test_degraded_run_state_is_terminal_until_new_recovery_run(self):
+        from agent.resilience import RunStateMachine
+        class Journal:
+            def __init__(self):
+                self.events = []
+            def record(self, event, **kwargs):
+                self.events.append((event, kwargs))
+        journal = Journal()
+        machine = RunStateMachine(journal)
+        machine.transition("running")
+        machine.transition("paused_recovery_required")
+        self.assertEqual(machine.state, "paused_recovery_required")
+        with self.assertRaisesRegex(ValueError, "Invalid run state transition"):
+            machine.transition("completed")
+

@@ -141,7 +141,7 @@ class PatchPreparationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "PATCH_PROPOSAL.json"
-            output = "Plan complete.\\nPATCH_PROPOSAL_JSON:\\n" + json.dumps(proposal())
+            output = "Plan complete.\nPATCH_PROPOSAL_JSON:\n" + json.dumps(proposal())
             status = persist_patch_proposal(output, path)
             self.assertEqual(status["status"], "validated")
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["version"], 1)
@@ -152,7 +152,7 @@ class PatchPreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "PATCH_PROPOSAL.json"
             path.write_text("stale", encoding="utf-8")
-            unsafe = "PATCH_PROPOSAL_JSON:\\n" + __import__("json").dumps(proposal(path="../outside.py"))
+            unsafe = "PATCH_PROPOSAL_JSON:\n" + __import__("json").dumps(proposal(path="../outside.py"))
             status = persist_patch_proposal(unsafe, path)
             self.assertEqual(status["status"], "rejected")
             self.assertFalse(path.exists())

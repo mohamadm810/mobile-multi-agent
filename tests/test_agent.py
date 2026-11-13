@@ -720,5 +720,45 @@ class IndependentProviderSafetyTests(unittest.TestCase):
         self.assertEqual(captured["error"].count("[REDACTED]"), 2)
 
 
+
+
+class AgentFailureIsolationPolicyTests(unittest.TestCase):
+    def test_transient_provider_failure_is_recoverable(self):
+        from agent.run import classify_failure
+        policy = classify_failure(AgentError("HTTP 503: temporarily unavailable", retryable=True))
+        self.assertEqual(policy["category"], "transient_dependency")
+        self.assertTrue(policy["retryable"])
+        self.assertEqual(policy["strategy"], "checkpoint_resume")
+
+    def test_authentication_failure_is_not_retried_or_isolated(self):
+        from agent.run import classify_failure
+        policy = classify_failure(AgentError("HTTP 403: forbidden"))
+        self.assertEqual(policy["category"], "security_or_permission")
+        self.assertFalse(policy["retryable"])
+        self.assertEqual(policy["strategy"], "human_review")
+
+    def test_unknown_failure_fails_closed(self):
+        from agent.run import classify_failure
+        policy = classify_failure(RuntimeError("unexpected parser defect"))
+        self.assertEqual(policy["category"], "unknown")
+        self.assertFalse(policy["retryable"])
+
+    def test_degraded_run_is_paused_until_recovery(self):
+        from agent.resilience import RunStateMachine
+        class Journal:
+            def __init__(self):
+                self.events = []
+            def record(self, event, **kwargs):
+                self.events.append((event, kwargs))
+        journal = Journal()
+        machine = RunStateMachine(journal)
+        machine.transition("running")
+        machine.transition("paused_recovery_required")
+        self.assertEqual(machine.state, "paused_recovery_required")
+        self.assertIn(("run_paused", {"status": "recovery_required"}), journal.events)
+        with self.assertRaisesRegex(ValueError, "Invalid run state transition"):
+            machine.transition("completed")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -104,6 +104,51 @@ class UnifiedDiffTests(unittest.TestCase):
         self.assertEqual(apply_unified_diff("second\n", diff, "agent/example.py"), "first\nsecond\n")
 
 
+class ProposalFreshnessTests(unittest.TestCase):
+    def setUp(self):
+        from agent.patch_spec import patch_proposal_fingerprint
+        from agent.apply_proposal import verify_proposal_freshness
+
+        self.proposal = proposal()
+        self.request = "implement the requested change"
+        self.source = "source-fingerprint"
+        self.state = {
+            "status": "planning_review_required",
+            "request_fingerprint": __import__("hashlib").sha256(self.request.encode("utf-8")).hexdigest(),
+            "source_fingerprint": self.source,
+            "patch_proposal_status": {
+                "status": "validated",
+                "proposal_fingerprint": patch_proposal_fingerprint(self.proposal),
+            },
+        }
+        self.verify = verify_proposal_freshness
+
+    def test_accepts_successful_fresh_proposal(self):
+        validated = self.verify(self.state, self.proposal, self.request, self.source)
+        self.assertEqual(validated["version"], 1)
+
+    def test_rejects_failed_or_incomplete_run(self):
+        state = dict(self.state, status="failed")
+        with self.assertRaisesRegex(PatchSpecError, "not completed successfully"):
+            self.verify(state, self.proposal, self.request, self.source)
+
+    def test_rejects_changed_user_request(self):
+        with self.assertRaisesRegex(PatchSpecError, "different user request"):
+            self.verify(self.state, self.proposal, "new request", self.source)
+
+    def test_rejects_changed_repository_source(self):
+        with self.assertRaisesRegex(PatchSpecError, "source changed"):
+            self.verify(self.state, self.proposal, self.request, "new-source")
+
+    def test_rejects_proposal_tampering(self):
+        altered = proposal()
+        altered["changes"][0]["unified_diff"] = (
+            "--- a/agent/example.py\\n+++ b/agent/example.py\\n@@ -1 +1 @@\\n-old\\n+altered\\n"
+        )
+        with self.assertRaisesRegex(PatchSpecError, "changed after it was reviewed"):
+            self.verify(self.state, altered, self.request, self.source)
+
+
 class PatchPreparationTests(unittest.TestCase):
     def test_prepares_patch_without_mutating_repository(self):
         with tempfile.TemporaryDirectory() as directory:

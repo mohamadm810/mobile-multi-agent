@@ -256,6 +256,29 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(len(saved_state["completed_agents"]), 7)
 
 
+class ConfigValidationTests(unittest.TestCase):
+    def test_positive_integer_env_parses_valid_value(self):
+        from agent.config import _positive_int_env
+        with patch.dict(os.environ, {"TEST_POSITIVE_SETTING": "256"}):
+            self.assertEqual(_positive_int_env("TEST_POSITIVE_SETTING", 10), 256)
+
+    def test_positive_integer_env_rejects_invalid_values(self):
+        from agent.config import _positive_int_env
+        for invalid in ("", "abc", "1.5", "0", "-4"):
+            with self.subTest(value=invalid), patch.dict(
+                os.environ, {"TEST_POSITIVE_SETTING": invalid}
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "TEST_POSITIVE_SETTING must be a positive integer"
+                ):
+                    _positive_int_env("TEST_POSITIVE_SETTING", 10)
+
+    def test_positive_integer_env_uses_default_when_unset(self):
+        from agent.config import _positive_int_env
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_positive_int_env("UNSET_POSITIVE_SETTING", 17), 17)
+
+
 class RequestValidationTests(unittest.TestCase):
     def test_rejects_empty_request(self):
         from agent.run import run_cycle

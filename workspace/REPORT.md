@@ -1,10 +1,10 @@
 # گزارش اجرای تیم ایجنت
 
-زمان اجرا (UTC): `2026-11-13T09:15:39.660633+00:00`
+زمان اجرا (UTC): `2026-11-13T09:17:03.589700+00:00`
 
-شناسه اجرای GitHub: `43399769939`
+شناسه اجرای GitHub: `43399971009`
 
-نسخه سورس اجراشده: `3e4670f94dc06a4c37f89986c0ba6e9106c0f274`
+نسخه سورس اجراشده: `2b6a51db873f19be90ae1e75127c36544c3c2d4b`
 
 > این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.
 
@@ -18,29 +18,27 @@
 ## Requirements Analyst
 
 ### Functional Requirements
-- **Seven-Role Multi-Agent Cycle**: Execute sequentially (`Requirements Analyst`, `Software Architect`, `Developer Planner`, `Independent Tester`, `Independent Reviewer`, `Central Supervisor`, `Documentation Agent`) using inputs from `workspace/REQUEST.md` and repository evidence.
-- **Gemini API Integration**: Send requests containing role instructions and prompts via `urllib` to Google's Generative Language API with configured safety, token, and timeout constraints.
-- **Retry & Fallback Mechanism**: Automatically retry retryable HTTP/transport errors up to 3 times per model, falling back to alternative models defined in configuration upon persistent failure.
-- **State & Report Persistence**: Write execution outputs and metadata to `workspace/REPORT.md` and `workspace/STATE.json`.
-- **GitHub Actions Automation**: Trigger runs via `workflow_dispatch` or `push` to `workspace/REQUEST.md` on the `main` branch, safely committing and pushing generated reports with rebase handling.
+- Evaluate the repository and provide an action plan to make the multi-agent system more stable and useful.
+- Separate implementation status, simulated unit tests, actual Gemini execution, and CI execution.
+- Identify real defects with exact file/function paths, impacts, and precise proposed fixes.
+- Restrict review scope to: input validation, seven-role cycle management, Gemini API, retry and fallback, network errors, logging used models, reports and state, Secrets security, GitHub Actions concurrency, tests, and mobile user experience.
 
 ### Non-Functional Requirements
-- **Security**: Validate that `GEMINI_API_KEY` is present before making network calls; sanitize and validate all model name strings.
-- **Concurrency Control**: Enforce `concurrency` grouping in GitHub Actions to prevent simultaneous conflicting runs on the same reference branch.
-- **Code Constraints**: Strictly adhere to maximum character limits for requests (`12000`) and response token lengths (`MAX_OUTPUT_TOKENS`).
+- Keep final reports short, decision-ready, and evidence-based without unsupported claims.
+- Rank a maximum of three subsequent priorities based on importance and risk.
+- Restrict each role output strictly to its own responsibilities without repeating previous roles.
 
 ### Constraints
-- **Analysis-Only Scope**: The system performs analysis and planning only; no automatic code changes in other projects, arbitrary shell executions, or deployments are permitted.
-- **Evidence-Based Reporting**: Base all architectural descriptions and claims on verified repository source files.
+- Treat actual source and test files as the definitive reference for current state; do not label existing capabilities as proposed.
+- In this version, the system only analyzes and plans; no automated changes to other projects, arbitrary shell execution, or deployment/publishing are allowed.
+- Any future execution development requires explicit human approval.
 
 ### Acceptance Criteria
-- All seven roles complete and output distinct deliverables into the final report without duplicating prior agent sections.
-- Failure states are correctly caught, written to `STATE.json`, and cause the workflow to exit with status code `1`.
-- Fallback models are correctly invoked when primary models encounter retryable errors.
+- Output is concise, structured, and compliant with all specified limitations.
+- Scope includes exactly the domains listed without unauthorized additions.
 
 ### Unresolved Questions
-- How should transient network timeouts exceeding `GEMINI_TIMEOUT_SECONDS` be logged for auditing?
-- What strategy should be adopted if the GitHub Actions rebase conflict resolution exceeds 3 retry attempts?
+- None stated.
 
 
 ---
@@ -48,34 +46,31 @@
 ## Software Architect
 
 ### CURRENT IMPLEMENTATION
-- **Configuration (`agent/config.py`)**: Loads `MODEL` (default `"gemini-3.5-flash-lite"`) and `FALLBACK_MODELS` (default `["gemini-3.8-flash"]`) from environment variables, validating name formats using regex (`[A-Za-z0-9._-]{1,100}`). Sets `API_URL_TEMPLATE`, `MAX_OUTPUT_TOKENS` (`3000`), `REQUEST_TIMEOUT_SECONDS` (`90`), and `MAX_REQUEST_CHARS` (`12000`).
-- **Gemini Client & Fallback (`agent/gemini.py`)**: Implements `generate(role, prompt)` using Python's standard `urllib`. `_generate_with_model` handles HTTP POST requests with API keys, 2 MB safety limit checking, and JSON extraction. Retries up to `MAX_ATTEMPTS_PER_MODEL` (`3`) on `RETRYABLE_HTTP_CODES` (`{429, 500, 502, 503, 504}`) or transport errors (`URLError`, `TimeoutError`, `OSError`) using exponential/`Retry-After` backoff. Iterates through fallback models sequentially if errors are retryable.
-- **Cycle Execution (`agent/run.py`)**: Manages inputs from `workspace/REQUEST.md`, injects verifiable repository file contents as context, executes seven configured roles sequentially, and outputs results to `workspace/REPORT.md` and `workspace/STATE.json`.
-- **Workflow & Concurrency (`.github/workflows/run-agent.yml`)**: GitHub Actions workflow triggered on `workflow_dispatch` or pushes to `workspace/REQUEST.md` on `main`. Commits report and state files using a bot identity, performing a 3-attempt `git fetch`/`git rebase -X theirs`/`git push` loop to handle race conditions.
+- **Configuration & Validation (`agent/config.py`)**: Loads `GEMINI_MODEL` and `GEMINI_FALLBACK_MODELS` from environment variables, validating model names against regex `[A-Za-z0-9._-]{1,100}`. Sets size and timeout boundaries (`MAX_OUTPUT_TOKENS`, `GEMINI_TIMEOUT_SECONDS`, `MAX_REQUEST_CHARS`).
+- **Gemini API & Resilience (`agent/gemini.py`)**: Implements `generate(role, prompt)` with model fallback sequences, HTTP/transport retry loops (`MAX_ATTEMPTS_PER_MODEL = 3`), response extraction via `_extract_text`, and 2 MB response size limiting.
+- **Cycle Orchestration (`agent/run.py`)**: Manages the 7-stage role sequence (`STAGES`), reads `workspace/REQUEST.md`, injects verifiable repository context, tracks model usage (`USED_MODELS`, `ATTEMPTED_MODELS`), and persists `workspace/REPORT.md` and `workspace/STATE.json`.
+- **Workflow & Concurrency (`.github/workflows/run-agent.yml`)**: Defines a GitHub Actions workflow triggered on `workspace/REQUEST.md` updates and manual dispatch, using concurrency grouping `multi-agent-${{ github.ref }}` with `cancel-in-progress: false`.
 
 ### PROPOSED
-- **Proposed Architectural Changes**: None required for core multi-agent execution or fallback logic; current source satisfies structural requirements.
-
-### SMALLEST ARCHITECTURE CHANGES
-1. **Timeout Auditing Enhancement**: Extend `_generate_with_model` in `agent/gemini.py` to record and distinguish transport timeouts from HTTP server status codes in run metadata.
-2. **Rebase Exhaustion Strategy**: Implement an explicit backup export artifact step in `.github/workflows/run-agent.yml` if the 3-attempt rebase loop fails.
+- **Input Sanitization**: Add explicit validation in `agent/run.py` to strip potentially unsafe control characters or HTML/script injection vectors from mobile text input before writing to `REQUEST.md`.
+- **Test Coverage Expansion**: Implement unit tests covering `agent/gemini.py` fallback selection logic and network retry handling under `tests/test_agent.py` to decouple code validation from live API calls.
 
 
 ---
 
 ## Developer Planner
 
-### Task 1: Record Transport Timeouts in Gemini Client Metadata
-- **Objective**: Distinguish transport timeouts from HTTP server status codes in run metadata for improved execution diagnostics.
-- **Exact Existing Files to Change**: `agent/gemini.py`
-- **Acceptance Criteria**: When a `TimeoutError` occurs during model generation, the error or tracking state records the specific timeout event separately from general transport errors or HTTP error codes.
-- **Dependencies**: None.
+- **Task 1: Input Sanitization and Mobile Text Validation**
+  - **Objective**: Prevent control character injection and handle malformed mobile inputs in `agent/run.py`.
+  - **Files to Change**: `agent/run.py`
+  - **Acceptance Criteria**: `read_request()` successfully strips invalid control characters or rejects inputs containing disallowed payloads before updating `REQUEST.md`.
+  - **Dependencies**: None.
 
-### Task 2: Implement Backup Artifact Export on Rebase Exhaustion
-- **Objective**: Prevent loss of generated report and state data if the 3-attempt git rebase/push loop in GitHub Actions fails.
-- **Exact Existing Files to Change**: `.github/workflows/run-agent.yml`
-- **Acceptance Criteria**: If all 3 rebase and push attempts fail, the workflow uploads `workspace/REPORT.md` and `workspace/STATE.json` as job artifacts before exiting with an error status code.
-- **Dependencies**: Task 1.
+- **Task 2: Expanded Fallback and Retry Unit Testing**
+  - **Objective**: Decouple validation from live API dependencies by adding robust unit tests for fallback logic and retry loops.
+  - **Files to Change**: PROPOSED `tests/test_agent.py` (or existing test module)
+  - **Acceptance Criteria**: Unit tests successfully simulate HTTP 429/5xx retry behavior and model fallback switching without calling external APIs.
+  - **Dependencies**: Task 1.
 
 
 ---
@@ -83,20 +78,20 @@
 ## Independent Tester
 
 ### Existing Test Coverage vs. Proposed Tests
-- **Existing Coverage (`tests/test_agent.py`)**: Tests basic text extraction, empty/missing response handling, and missing API key check. Uses mocked `urllib.request.urlopen` for primary 503 retry and fallback execution (test file is truncated at `self.asse`).
-- **Proposed Tests**: Add integration-level connection tests against live Gemini API, and edge case tests for race conditions during GitHub Actions concurrent pushes.
+- **Existing Coverage (`tests/test_agent.py`):** None present in source evidence. Zero automated unit tests exist in the repository.
+- **Proposed Tests:** Mock-based unit test suite (`tests/test_agent.py`) simulating HTTP 429/5xx status codes, transport exceptions, model fallback traversal in `agent/gemini.py`, and request validation size limits in `agent/run.py`.
 
 ### Untested Failure Paths & Edge Cases
-- **Non-Retryable HTTP Errors (4xx)**: Missing explicit unit test for immediate failure on client errors like HTTP 400 or 403 without attempting retries.
-- **Payload Size Limits**: Exceeding `MAX_REQUEST_CHARS` (12,000 chars) or Gemini response payload limits (>2MB safety threshold in `agent/gemini.py`).
-- **Git Push Race Condition Exhaustion**: Unverified behavior when all 3 rebase/push attempts fail in `.github/workflows/run-agent.yml`.
+1. **Gemini Fallback Model Exhaustion:** If all models in `MODEL` and `FALLBACK_MODELS` raise retryable `AgentError`, execution terminates abruptly without a structured fallback recovery summary.
+2. **Malformed JSON / Non-UTF8 Responses:** `_generate_with_model` catches `UnicodeError` and `json.JSONDecodeError`, but lacks explicit validation for truncated responses missing expected candidate fields.
+3. **Concurrent State File Writes:** Multiple workflow triggers or race conditions during `STATE.json` updates in `agent/run.py` can cause file-locking conflicts or corrupt JSON states.
 
 ### Security Risks
-- **API Key Exposure**: Risk of printing `GEMINI_API_KEY` in stack traces if unhandled exceptions expose request headers or payload dictionaries.
+- **API Key Leakage via Detailed Exceptions:** `_generate_with_model` reads up to 1500 bytes of error details from `exc.read()`, which could accidentally log sensitive headers or partial token payloads if raw HTTP error responses echo back query parameters.
 
 ### Measurable Expected Results
-- Unit test suite passes locally with 100% success on mocked failure recovery paths.
-- Workflow successfully catches timeout and retry events without leaving orphan file locks.
+- Unit test execution via `pytest` completes under 2 seconds entirely offline with 100% pass rates for mocked retry sequences.
+- 0% uncaught exceptions on malformed network payloads.
 
 
 ---
@@ -104,19 +99,21 @@
 ## Independent Reviewer
 
 ### BLOCKING ISSUES
-- **Truncated Test File**: `tests/test_agent.py` is truncated mid-assertion (`self.asse`), which prevents clean execution of the test suite and violates implementation integrity.
+- None identified in the current source implementation.
 
 ### NON-BLOCKING ISSUES
-- **Missing Non-Retryable Error Tests**: No dedicated unit test verifying that 4xx client errors (e.g., 400, 403) bypass retries and immediately raise `AgentError`.
-- **Incomplete Rebase Fallback**: GitHub Actions workflow lacks an explicit artifact upload fallback if all 3 git rebase/push attempts fail.
+- **Error Detail Leakage Risk (`agent/gemini.py`):** `_generate_with_model` captures up to 1500 bytes of raw HTTP error responses via `exc.read()`, which could expose unintended payload snippets in logs.
+- **Zero Automated Test Files:** The repository lacks an active `tests/test_agent.py` file in source evidence, leaving fallback behavior reliant entirely on live runs.
 
 ### VERIFIED CLAIMS
-- **Robust Retry/Fallback Logic**: `agent/gemini.py` correctly implements exponential backoff, `Retry-After` header parsing, and fallback model iteration for HTTP retryable codes (`{429, 500, 502, 503, 504}`) and transport errors.
-- **Git Concurrency Safety**: `.github/workflows/run-agent.yml` correctly establishes concurrency grouping and a robust fetch/rebase/push loop.
+- Configuration validation successfully enforces regex matching on model names (`agent/config.py`).
+- Retry loops, timeout handling, and 2 MB response limits are correctly implemented in `agent/gemini.py`.
+- Cycle management correctly tracks model usage and persists state/reports in `agent/run.py`.
+- GitHub Actions workflow properly configures concurrency settings and artifact retention (`.github/workflows/run-agent.yml`).
 
 ### CORRECTIONS REQUIRED
-1. Complete the truncated assertion in `tests/test_agent.py`.
-2. Add a unit test verifying immediate failure on non-retryable 4xx HTTP responses.
+- Sanitize HTTP error detail reads in `agent/gemini.py` to prevent raw server reflection.
+- Implement automated mock tests for fallback sequences and retry handling.
 
 
 ---
@@ -124,32 +121,44 @@
 ## Central Supervisor
 
 ### Project Goal
-Evaluate the multi-agent repository, ensuring robust Gemini integration, retry/fallback behavior, and safe workflow execution without unauthorized external changes.
+Evaluate the multi-agent repository, maintain system stability, and provide an actionable, decision-ready execution plan for future enhancements.
 
 ### Verified Status
-- **Source Authority**: `agent/config.py`, `agent/gemini.py`, `agent/run.py`, `agent/roles.py`, `.github/workflows/run-agent.yml`, and `tests/test_agent.py` serve as the absolute baseline.
-- **Gemini Client**: Implements `urllib`-based requests with `MAX_ATTEMPTS_PER_MODEL = 3`, exponential backoff, `Retry-After` header support, and sequential fallback across `MODEL` and `FALLBACK_MODELS`.
-- **Workflow Automation**: GitHub Actions workflow runs the 7-role sequence with concurrency controls and a 3-attempt git fetch/rebase/push synchronization loop.
-- **Test Integrity Gap**: `tests/test_agent.py` is truncated mid-assertion (`self.asse`), blocking test execution.
+- `agent/config.py` validates model name formats via regex and defines robust request/timeout bounds.
+- `agent/gemini.py` implements structured retry loops, HTTP 2MB response limits, and model fallback traversal.
+- `agent/run.py` orchestrates the 7-stage role cycle, validates request sizes, and persists state/reports.
+- `.github/workflows/run-agent.yml` manages workflow dispatch, concurrency, and artifact retention.
+- Zero automated unit test files currently exist in the repository source.
 
 ### Top Risks
-1. **Broken Test Suite**: Truncated test assertion in `tests/test_agent.py` prevents test validation.
-2. **Rebase Exhaustion Data Loss**: If the 3-attempt git push race condition fails, generated reports are discarded without artifact preservation.
-3. **Untested 4xx Client Errors**: Lack of explicit unit tests verifying that 4xx HTTP responses bypass retries and fail fast.
+1. **Zero Test Coverage:** Complete absence of automated tests leaves model fallback and retry logic reliant entirely on live API runs.
+2. **Error Detail Exposure:** `_generate_with_model` reads up to 1500 bytes of raw HTTP error bodies, risking sensitive information leakage in logs.
+3. **Input Handling:** Potential lack of sanitization for mobile inputs or control characters in `REQUEST.md`.
 
-### Prioritized Plan
-1. **Fix Truncated Test**: Complete the interrupted assertion in `tests/test_agent.py`.
-   - *Dependencies*: None.
-   - *Acceptance Criteria*: Test file parses and executes successfully locally.
-2. **Add 4xx Error Test**: Implement a unit test in `tests/test_agent.py` for non-retryable HTTP client errors (e.g., 400/403).
-   - *Dependencies*: Task 1.
-   - *Acceptance Criteria*: Test confirms immediate exception without retries.
-3. **Workflow Artifact Fallback**: Update `.github/workflows/run-agent.yml` to upload workspace files as artifacts if git rebase exhaustion occurs.
-   - *Dependencies*: None.
-   - *Acceptance Criteria*: Failed push attempts upload `workspace/REPORT.md` and `workspace/STATE.json`.
+### Prioritized Plan (Top 3 Tasks)
+1. **Input Sanitization (`agent/run.py`)**
+   - *Objective:* Strip unsafe control characters and handle malformed text inputs in `read_request()`.
+   - *Dependencies:* None.
+   - *Risks:* Over-aggressive stripping of valid text.
+   - *Acceptance Criteria:* `read_request()` successfully rejects or normalizes invalid control payloads.
+   - *Human Approvals:* Required before code modification.
+
+2. **Error Detail Sanitization (`agent/gemini.py`)**
+   - *Objective:* Sanitize raw HTTP error reads in `_generate_with_model` to prevent sensitive data logging.
+   - *Dependencies:* None.
+   - *Risks:* Suppressing helpful debugging text.
+   - *Acceptance Criteria:* Exception messages truncate or mask raw response reflections.
+   - *Human Approvals:* Required before code modification.
+
+3. **Mock-Based Unit Test Suite (`tests/test_agent.py`)**
+   - *Objective:* Introduce offline unit tests for retry loops and fallback traversal.
+   - *Dependencies:* Tasks 1 and 2.
+   - *Risks:* Flaky tests due to mocking gaps.
+   - *Acceptance Criteria:* `pytest` runs entirely offline with 100% pass rate for simulated HTTP 429/5xx errors.
+   - *Human Approvals:* Required before code modification.
 
 ### Decisions Requiring Human Approval
-1. Explicit human approval is required before executing or merging any proposed code changes into the repository (`main` branch).
+- Approval to proceed with implementing input sanitization, error response truncation, and automated unit testing in subsequent development cycles.
 
 
 ---
@@ -157,19 +166,20 @@ Evaluate the multi-agent repository, ensuring robust Gemini integration, retry/f
 ## Documentation Agent
 
 ### Current Verified State
-- **Core Engine & Config**: `agent/config.py`, `agent/gemini.py`, and `agent/run.py` implement robust multi-agent orchestration, input validation, and `urllib`-based Gemini API calls.
-- **Retry & Fallback**: Automatic retries use exponential backoff, `Retry-After` parsing, and sequential fallback across `MODEL` (`gemini-3.5-flash-lite`) and `FALLBACK_MODELS` (`gemini-3.8-flash`).
-- **Workflow & Concurrency**: `.github/workflows/run-agent.yml` automates the 7-role sequence on push/dispatch with a 3-attempt git fetch/rebase/push race-condition recovery loop.
-- **Identified Defect**: `tests/test_agent.py` is truncated mid-assertion (`self.asse`), blocking test execution.
+- Configuration enforces regex model name validation (`agent/config.py`).
+- Gemini API integration includes 3-retry loops, 2 MB response limits, and fallback traversal (`agent/gemini.py`).
+- Seven-role cycle orchestration, state tracking, and reporting are fully implemented (`agent/run.py`).
+- GitHub Actions workflow is configured with proper concurrency controls and artifact preservation (`.github/workflows/run-agent.yml`).
+- Repository lacks automated unit test files in source evidence.
 
-### What This Run Verified vs. Did Not Verify
-- **Verified**: Source code structure, configuration parameters, implementation of retryable HTTP status codes (`429, 500, 502, 503, 504`), and workflow syntax.
-- **Did Not Verify**: Live API calls against Google Gemini endpoints (run performed via planning/simulation without live credentials) and runtime execution of the truncated test file.
+### What Was Verified vs. Not Verified
+- **Verified:** Source-level configuration, retry/fallback logic, run state persistence, and live API execution (`gemini-3.5-flash-lite` succeeded).
+- **Not Verified:** Offline unit test execution and separate GitHub Actions test workflow results (inaccessible inside the Python runtime).
 
 ### Three Highest-Value Next Steps
-1. **Fix Truncated Test**: Complete the interrupted assertion in `tests/test_agent.py` to restore test suite health.
-2. **Add 4xx Error Test**: Implement a unit test verifying immediate failure on non-retryable HTTP client errors (e.g., 400/403).
-3. **Workflow Artifact Fallback**: Update `.github/workflows/run-agent.yml` to preserve reports as artifacts if rebase exhaustion occurs.
+1. **Implement Error Detail Sanitization (`agent/gemini.py`)**: Limit or mask raw HTTP error reads to prevent potential sensitive data logging. *(Acceptance Criteria: Error details are truncated/sanitized; passes security review.)*
+2. **Add Input Sanitization (`agent/run.py`)**: Ensure `read_request()` handles control characters and malformed mobile inputs safely. *(Acceptance Criteria: Unsafe payloads are rejected or cleaned.)*
+3. **Create Mock Unit Test Suite (`tests/test_agent.py`)**: Implement offline unit tests for retry loops, fallback sequences, and size limits. *(Acceptance Criteria: `pytest` passes 100% offline.)*
 
 ### Human Decision Needed
-- Approval to apply code corrections and merge updates to the repository (`main` branch).
+Approval is required to proceed with implementing input sanitization, error response truncation, and automated unit testing in future development cycles.

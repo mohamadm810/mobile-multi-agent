@@ -330,7 +330,9 @@ class OrchestrationTests(unittest.TestCase):
                 "agent.run.STATE_FILE", root / "STATE.json"
             ), patch("agent.run.REPORT_FILE", root / "REPORT.md"), patch(
                 "agent.run.read_state", return_value={"status": "not_started"}
-            ), patch("agent.run.read_repository_context", return_value="source evidence"):
+            ), patch("agent.run.read_repository_context", return_value="source evidence"), patch(
+                "agent.run.TEAM_FILE", root / "TEAM.json"
+            ):
                 outputs = run_cycle(
                     "test request",
                     generator=lambda role, prompt: prompts.append((role, prompt)) or "ok",
@@ -463,6 +465,28 @@ class AgentGovernanceTests(unittest.TestCase):
              "prompt": "A sufficiently long prompt " + ("with instructions " * 4)},
         ]})
         with self.assertRaisesRegex(ValueError, "action limit"):
+            apply_hr_decisions(payload, registry)
+
+
+    def test_hr_can_revise_non_manager_core_role(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
+        revised = "You are a revised specialist reviewer. " + ("Use evidence and measurable criteria. " * 3)
+        payload = json.dumps({"actions": [{
+            "action": "revise", "name": "Independent Reviewer", "prompt": revised,
+        }]})
+        _, applied = apply_hr_decisions(payload, registry)
+        self.assertEqual(registry["role_overrides"]["Independent Reviewer"], revised)
+        self.assertIn("next cycle", applied[0])
+
+    def test_hr_cannot_revise_manager_role(self):
+        from agent.run import apply_hr_decisions
+        registry = {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}}
+        payload = json.dumps({"actions": [{
+            "action": "revise", "name": "Central Supervisor",
+            "prompt": "A sufficiently long replacement instruction " * 3,
+        }]})
+        with self.assertRaisesRegex(ValueError, "Central Supervisor"):
             apply_hr_decisions(payload, registry)
 
     def test_hr_rejects_invalid_json_without_changes(self):

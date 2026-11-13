@@ -90,6 +90,7 @@ jobs:
         run: |
           git diff --check
           git add -- agent/ tests/
+          git diff --cached --check
           if git diff --cached --quiet; then
             echo "The approved proposal produced no changes"
             exit 1
@@ -119,12 +120,12 @@ jobs:
         if: failure()
         run: |
           mkdir -p workspace
-          git diff --binary -- agent/ tests/ > workspace/FAILED_PATCH.diff || true
+          git diff --binary main -- agent/ tests/ > workspace/FAILED_PATCH.diff || true
       - name: Upload failed patch diff
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failed-agent-patch-${GITHUB_RUN_ID}
+          name: failed-agent-patch-${{ github.run_id }}
           path: workspace/FAILED_PATCH.diff
           if-no-files-found: warn
           retention-days: 14

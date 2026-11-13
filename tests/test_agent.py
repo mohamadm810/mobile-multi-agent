@@ -659,6 +659,13 @@ class AgentGovernanceTests(unittest.TestCase):
             with self.assertRaisesRegex(AgentError, "HTTPS"):
                 _openai_endpoint()
 
+    def test_empty_optional_workflow_variables_use_safe_provider_defaults(self):
+        from agent.gemini import _openai_endpoint
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": "", "OPENAI_MODEL": ""}):
+            endpoint, model = _openai_endpoint()
+        self.assertEqual(endpoint, "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(model, "gpt-4.1-mini")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -58,6 +58,8 @@ REPOSITORY_EVIDENCE_FILES = [
     "agent/roles.py",
     ".github/workflows/run-agent.yml",
     "tests/test_agent.py",
+    "agent/resilience.py",
+    "tests/test_resilience.py",
 ]
 MAX_REPOSITORY_CONTEXT_CHARS = 65000
 
@@ -409,14 +411,33 @@ def run_cycle(request=None, generator=generate):
         hr_output = call_with_retries(lambda: generator(HR, hr_prompt))
         checkpoint.record_stage("__hr_output__", hr_output)
     hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
-    try:
-        hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
-        hr_status = "valid"
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
-                       "manager_review": "none", "actions": []}
-        hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
-        hr_status = "rejected"
+
+    # Persist the complete HR transaction before writing TEAM.json. If the
+    # workflow is interrupted between those writes, replay the saved result
+    # instead of applying the same staffing action twice.
+    hr_transaction = checkpoint.get_metadata("hr_transaction")
+    if isinstance(hr_transaction, dict):
+        saved_registry = hr_transaction.get("registry")
+        if isinstance(saved_registry, dict):
+            registry = saved_registry
+        hr_decision = hr_transaction.get("decision", {})
+        hr_applied = hr_transaction.get("applied", [])
+        hr_status = hr_transaction.get("status", "rejected")
+    else:
+        try:
+            hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
+            hr_status = "valid"
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            hr_decision = {"summary": "HR response rejected; no staffing changes were applied.",
+                           "manager_review": "none", "actions": []}
+            hr_applied = [f"No changes applied: {type(exc).__name__}: {str(exc)[:250]}"]
+            hr_status = "rejected"
+        checkpoint.set_metadata("hr_transaction", {
+            "decision": hr_decision,
+            "applied": hr_applied,
+            "status": hr_status,
+            "registry": registry,
+        })
     outputs["Agent Recruitment & Governance"] = (
         "### HR decision\n" + str(hr_decision.get("summary", "No summary supplied."))
         + "\n\n### Manager review\n" + str(hr_decision.get("manager_review", "none"))
@@ -456,6 +477,7 @@ def run_cycle(request=None, generator=generate):
         f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
         f"\nتعداد متدهای تست موجود در سورس: `{len(unit_test_methods)}`",
         "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
+        f"\nمراحل بازیابی‌شده از checkpoint: `{len(resumed_stages)}`",
         f"\nمدل(های) تلاش‌شده: `{', '.join(models_attempted) or 'ثبت نشده'}`",
         f"\nمدل(های) پاسخ‌گوی موفق: `{', '.join(models_used) or 'ثبت نشده'}`",
     ]
@@ -470,6 +492,8 @@ def run_cycle(request=None, generator=generate):
         "status": "planning_review_required",
         "last_report": "workspace/REPORT.md",
         "completed_agents": list(outputs.keys()),
+        "resumed_agents": resumed_stages,
+        "checkpoint_available": False,
         "role_metrics": role_metrics,
         "team_registry": "workspace/TEAM.json",
         "active_custom_agents": [item["name"] for item in registry["custom_agents"]],

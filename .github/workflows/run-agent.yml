@@ -47,6 +47,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add workspace/REPORT.md workspace/STATE.json
+          if [ -f workspace/PREFLIGHT.json ]; then git add workspace/PREFLIGHT.json; fi
           if [ -f workspace/EVENTS.jsonl ]; then git add workspace/EVENTS.jsonl; fi
           # Keep resumable stage outputs across failed workflow reruns; stage deletion on success.
           if [ -f workspace/CHECKPOINT.json ]; then
@@ -87,6 +88,7 @@ jobs:
           path: |
             workspace/REPORT.md
             workspace/STATE.json
+            workspace/PREFLIGHT.json
             workspace/EVENTS.jsonl
             workspace/CHECKPOINT.json
             workspace/PATCH_PROPOSAL.json

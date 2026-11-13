@@ -119,7 +119,4 @@ class CheckpointStore:
     def clear(self):
         self.outputs = {}
         self.metadata = {}
-        try:
-            self.path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        self.path.unlink(missing_ok=True)

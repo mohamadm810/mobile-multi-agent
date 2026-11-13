@@ -22,6 +22,8 @@ def validate_target_path(path):
         raise PatchSpecError("Patch target contains an unsafe path component.")
     if not any(path.startswith(prefix) for prefix in ALLOWED_PREFIXES):
         raise PatchSpecError("Patch target must be inside agent/ or tests/.")
+    if not path.endswith(".py"):
+        raise PatchSpecError("Initial patch scope is limited to Python source and test files.")
     if PurePosixPath(path).as_posix() != path:
         raise PatchSpecError("Patch target path is not canonical.")
     return path

@@ -384,5 +384,29 @@ class RunLedgerTests(unittest.TestCase):
             self.assertFalse(journal.path.exists())
 
 
+
+
+    def test_run_cycle_persists_stage_lifecycle_events(self):
+        from unittest.mock import patch
+        from agent.run import run_cycle
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("agent.run.WORKSPACE", root), \
+                 patch("agent.run.STATE_FILE", root / "STATE.json"), \
+                 patch("agent.run.REPORT_FILE", root / "REPORT.md"), \
+                 patch("agent.run.TEAM_FILE", root / "TEAM.json"), \
+                 patch("agent.run.read_state", return_value={"status": "not_started"}), \
+                 patch("agent.run.read_repository_context", return_value="source evidence"):
+                def generator(role, prompt):
+                    if role == __import__("agent.roles", fromlist=["HR"]).HR:
+                        return json.dumps({"summary": "complete", "manager_review": "none", "actions": []})
+                    return "completed"
+                run_cycle("ledger integration request", generator=generator)
+            events = [json.loads(line) for line in (root / "EVENTS.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertTrue(any(item["event"] == "stage_started" for item in events))
+            self.assertTrue(any(item["event"] == "stage_succeeded" for item in events))
+            self.assertEqual(events[-1]["status"], "completed")
+
+
 if __name__ == "__main__":
     unittest.main()

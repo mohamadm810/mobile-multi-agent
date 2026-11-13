@@ -365,7 +365,7 @@ def run_cycle(request=None, generator=generate):
         + json.dumps(role_metrics, ensure_ascii=False)
         + "\n\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\n"
         + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
-        + "\n\nReturn the required strict JSON. Apply changes only to custom agents. "
+        + "\n\nReturn the required strict JSON. Apply changes only to non-manager agents. "
         "Any manager concern must be a recommendation for human approval."
     )
     hr_started = __import__("time").perf_counter()

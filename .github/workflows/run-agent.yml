@@ -43,6 +43,11 @@ jobs:
           else
             git rm --cached --ignore-unmatch workspace/CHECKPOINT.json
           fi
+          if [ -f workspace/PATCH_PROPOSAL.json ]; then
+            git add workspace/PATCH_PROPOSAL.json
+          else
+            git rm --cached --ignore-unmatch workspace/PATCH_PROPOSAL.json
+          fi
           if [ -f workspace/TEAM.json ]; then git add workspace/TEAM.json; fi
           if git diff --cached --quiet; then
             echo "No report changes"
@@ -72,5 +77,6 @@ jobs:
             workspace/REPORT.md
             workspace/STATE.json
             workspace/CHECKPOINT.json
+            workspace/PATCH_PROPOSAL.json
           if-no-files-found: warn
           retention-days: 14

@@ -727,9 +727,10 @@ def main():
         run_cycle()
     except Exception as exc:
         safe_message = str(exc)
-        api_key = __import__("os").getenv("GEMINI_API_KEY", "").strip()
-        if api_key:
-            safe_message = safe_message.replace(api_key, "[REDACTED]")
+        for secret_name in ("GEMINI_API_KEY", "OPENAI_API_KEY"):
+            secret_value = os.getenv(secret_name, "").strip()
+            if secret_value:
+                safe_message = safe_message.replace(secret_value, "[REDACTED]")
         safe_error = f"{type(exc).__name__}: {safe_message}"
         try:
             write_failure_state(safe_error)

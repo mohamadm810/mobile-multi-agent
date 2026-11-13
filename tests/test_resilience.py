@@ -46,22 +46,18 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(call_with_retries(operation, sleep=sleeps.append), "ok")
         self.assertEqual(sleeps, [4.5])
 
-    def test_retry_after_is_capped_to_configured_maximum(self):
+    def test_retry_after_beyond_budget_is_not_violated_by_early_retry(self):
         class TemporaryFailure(RuntimeError):
             retryable = True
             retry_after = 999
 
         sleeps = []
-        attempts = []
-
-        def operation():
-            attempts.append(1)
-            if len(attempts) == 1:
-                raise TemporaryFailure("busy")
-            return "ok"
-
-        call_with_retries(operation, sleep=sleeps.append, max_delay_seconds=3)
-        self.assertEqual(sleeps, [3.0])
+        with self.assertRaises(TemporaryFailure):
+            call_with_retries(
+                lambda: (_ for _ in ()).throw(TemporaryFailure("busy")),
+                sleep=sleeps.append, max_delay_seconds=3,
+            )
+        self.assertEqual(sleeps, [])
 
     def test_does_not_retry_non_retryable_failure(self):
         attempts = []

@@ -1,9 +1,6 @@
 """Pure-Python, path-restricted unified-diff application. No shell or external patch tool."""
 
-import os
 import re
-import stat
-import tempfile
 from pathlib import Path, PurePosixPath
 
 from .patch_spec import PatchSpecError, validate_patch_spec
@@ -101,11 +98,11 @@ def _resolve_existing_target(root, relative_path):
     return resolved
 
 
-def apply_patch_spec(repository_root, proposal):
-    """Validate every change first, then atomically replace each affected existing file."""
+def prepare_patch_spec(repository_root, proposal):
+    """Validate every change and return proposed contents without modifying any file."""
     validated = validate_patch_spec(proposal)
     root = Path(repository_root).resolve(strict=True)
-    updates = []
+    prepared = {}
     for change in validated["changes"]:
         target = _resolve_existing_target(root, change["path"])
         try:
@@ -113,25 +110,7 @@ def apply_patch_spec(repository_root, proposal):
             original = original_bytes.decode("utf-8")
         except (OSError, UnicodeError):
             raise PatchSpecError("Patch target cannot be read as UTF-8 text.") from None
-        updated = apply_unified_diff(original, change["unified_diff"], change["path"])
-        updates.append((target, updated, stat.S_IMODE(target.stat().st_mode)))
-
-    temporary_files = []
-    try:
-        for target, updated, mode in updates:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", newline="", dir=target.parent,
-                prefix=f".{target.name}.", suffix=".patch-tmp", delete=False
-            ) as handle:
-                temporary = Path(handle.name)
-                handle.write(updated)
-                handle.flush()
-                os.fsync(handle.fileno())
-            temporary_files.append((temporary, target))
-            temporary.chmod(mode)
-        for temporary, target in temporary_files:
-            os.replace(temporary, target)
-        return [change["path"] for change in validated["changes"]]
-    finally:
-        for temporary, _ in temporary_files:
-            temporary.unlink(missing_ok=True)
+        prepared[change["path"]] = apply_unified_diff(
+            original, change["unified_diff"], change["path"]
+        )
+    return prepared

@@ -163,7 +163,8 @@ def read_team_registry():
     data["role_overrides"] = {key: value for key, value in overrides.items()
                               if key in CORE_AGENT_NAMES - {"Central Supervisor", "Agent Recruitment & Governance"}
                               and isinstance(value, str) and 50 <= len(value) <= 4000}
-    data["archived_agents"] = data.get("archived_agents", [])[-50:] if isinstance(data.get("archived_agents", []), list) else []
+    archived = data.get("archived_agents", [])
+    data["archived_agents"] = [item for item in archived if isinstance(item, dict)][-50:] if isinstance(archived, list) else []
     return data
 
 
@@ -399,7 +400,8 @@ def run_cycle(request=None, generator=generate):
         "role_metrics": role_metrics,
         "team_registry": "workspace/TEAM.json",
         "active_custom_agents": [item["name"] for item in registry["custom_agents"]],
-        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],\n        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
+        "archived_custom_agents": [item.get("name") for item in registry["archived_agents"]],
+        "hr_status": hr_status,\n        "hr_manager_review": hr_decision.get("manager_review", "none"),
         "models_used": models_used,
         "models_attempted": models_attempted,
         "unit_test_methods": unit_test_methods,

@@ -1,0 +1,18 @@
+{"schema":1,"run_id":"43469768828","sequence":1,"timestamp":"2026-11-13T17:08:26.944645+00:00","event":"state_transition","stage":null,"status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":2,"timestamp":"2026-11-13T17:08:26.948832+00:00","event":"stage_started","stage":"Requirements Analyst","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":3,"timestamp":"2026-11-13T17:08:30.247199+00:00","event":"stage_succeeded","stage":"Requirements Analyst","status":"completed","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":4,"timestamp":"2026-11-13T17:08:30.248550+00:00","event":"stage_started","stage":"Software Architect","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":5,"timestamp":"2026-11-13T17:08:32.539093+00:00","event":"stage_succeeded","stage":"Software Architect","status":"completed","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":6,"timestamp":"2026-11-13T17:08:32.540240+00:00","event":"stage_started","stage":"Developer Planner","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":7,"timestamp":"2026-11-13T17:08:35.555710+00:00","event":"stage_succeeded","stage":"Developer Planner","status":"completed","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":8,"timestamp":"2026-11-13T17:08:35.556611+00:00","event":"stage_started","stage":"Independent Tester","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":9,"timestamp":"2026-11-13T17:08:37.498912+00:00","event":"stage_succeeded","stage":"Independent Tester","status":"completed","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":10,"timestamp":"2026-11-13T17:08:37.500326+00:00","event":"stage_started","stage":"Independent Reviewer","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":11,"timestamp":"2026-11-13T17:08:40.630301+00:00","event":"stage_succeeded","stage":"Independent Reviewer","status":"completed","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":12,"timestamp":"2026-11-13T17:08:40.631535+00:00","event":"stage_started","stage":"Central Supervisor","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":13,"timestamp":"2026-11-13T17:08:42.959448+00:00","event":"stage_succeeded","stage":"Central Supervisor","status":"completed","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":14,"timestamp":"2026-11-13T17:08:42.960621+00:00","event":"stage_started","stage":"Documentation Agent","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":15,"timestamp":"2026-11-13T17:08:49.052022+00:00","event":"stage_failed","stage":"Documentation Agent","status":"isolated_failure","error_type":"AgentError"}
+{"schema":1,"run_id":"43469768828","sequence":16,"timestamp":"2026-11-13T17:08:49.054900+00:00","event":"stage_started","stage":"Agent Recruitment & Governance","status":"running","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":17,"timestamp":"2026-11-13T17:08:49.058151+00:00","event":"run_paused","stage":null,"status":"recovery_required","error_type":null}
+{"schema":1,"run_id":"43469768828","sequence":18,"timestamp":"2026-11-13T17:08:49.059040+00:00","event":"state_transition","stage":null,"status":"paused_recovery_required","error_type":null}

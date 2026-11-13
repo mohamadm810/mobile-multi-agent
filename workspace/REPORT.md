@@ -1,16 +1,22 @@
 # گزارش اجرای تیم ایجنت
 
-زمان اجرا (UTC): `2026-11-13T12:38:47.292666+00:00`
+زمان اجرا (UTC): `2026-11-13T17:08:49.055770+00:00`
 
-شناسه اجرای GitHub: `43426876460`
+شناسه اجرای GitHub: `43469768828`
 
-نسخه سورس اجراشده: `f149ace5040b4316439b2ae5aa0bc0ba2fb91032`
+نسخه سورس اجراشده: `8bc876316dad8bd473afc1579395900ba580e095`
 
-تعداد متدهای تست موجود در سورس: `43`
+تعداد متدهای تست موجود در سورس: `131`
 
 > این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.
 
-مدل(های) تلاش‌شده: `gemini-3.5-flash-lite`
+مراحل بازیابی‌شده از checkpoint: 0
+
+وضعیت پیشنهاد تغییر کد: none (تعداد فایل‌ها: 0)
+
+نقش‌های نیازمند بازیابی: Documentation Agent
+
+مدل(های) تلاش‌شده: `gemini-3.5-flash-lite, gemini-3.8-flash`
 
 مدل(های) پاسخ‌گوی موفق: `gemini-3.5-flash-lite`
 
@@ -20,36 +26,30 @@
 ## Requirements Analyst
 
 ### Functional Requirements
-1. **Controlled Code Execution:** Enable agents to propose file changes, create working branches, apply patches strictly within `agent/` and `tests/` directories, run unit tests, and generate readable git diffs.
-2. **Explicit Authorization Gates:** Require explicit human approval (via GitHub PR review or GitHub Mobile comments) before any commit, merge, or deployment. Ensure approvals are single-action and non-permanent.
-3. **Resilience & Recovery (Phase 2 Architectural Mandate):**
-   - Implement error classification (transient network/timeout/rate-limit, model/API failure, agent/tool failure, test failure, Git conflict, security/permission error).
-   - Enforce bounded retry with exponential backoff and jitter, respecting `Retry-After`.
-   - Implement safe fallbacks for models/tools without weakening security or permission boundaries.
-   - Maintain execution checkpoints (run ID, version, status, timestamp, checksum) ensuring resumption only from compatible checkpoints.
-   - Ensure failure isolation and safe pausing (`paused_recovery_required`) when no secure fallback exists (Fail Closed principle).
-   - Provide clear visibility of recovery status, stop reasons, and next steps via GitHub Mobile-compatible reports.
+1. Multi-agent evaluation must maintain role independence and prevent false consensus.
+2. The system must support controlled code modification via proposal generation, branch creation, localized patch application, testing, independent review, and diff reporting.
+3. Authorization gates must require explicit, single-use human approval (e.g., via GitHub workflow dispatch) for any executable change, commit, merge, or deployment.
+4. Error classification, bounded retries (with exponential backoff, jitter, and Retry-After limits), circuit breaking, and stage checkpointing must preserve resilience without bypassing security.
+5. The workflow status, review steps, diffs, and recovery actions must be fully inspectable and manageable via GitHub Mobile.
 
 ### Non-Functional Requirements
-1. **Security & Least Privilege:** Restrict tool execution paths, prevent prompt injection via repository content, protect secrets from logs, and prohibit arbitrary shell execution.
-2. **Reversibility:** Support secure branch/commit creation, easy rollback of applied patches, and preservation of decision history.
-3. **Mobile Usability:** Ensure all workflows (request submission, approval, diff inspection, test results, recovery status) are fully accessible and trackable via GitHub Mobile.
+1. Execution must enforce strict security boundaries, preventing shell injection, path traversal, and prompt injection.
+2. Secrets must be protected and never leaked into logs, events, or failure states.
+3. System must fail closed under permission errors, schema tampering, or unvalidated code patches.
 
 ### Constraints
-1. **Preserve Version 1:** Do not modify v1 code or its two stabilized branches (`release/v1.0.0`, `backup/pre-phase2-v1.0.0`).
-2. **Analysis-Only Cycle:** This cycle is strictly for requirements and design analysis; no executable files may be modified or activated.
-3. **Protected Roles:** Central Supervisor and HR Manager are immutable; their permissions cannot be altered without direct human approval.
-4. **Resilience Boundaries:** Resilience must never bypass security controls, path restrictions, secret protection, or human authorization requirements.
+1. Target changes are strictly limited to Python files within `agent/` and `tests/`.
+2. Protected core modules (`config.py`, `gemini.py`, `run.py`, `roles.py`, `resilience.py`, `patch_spec.py`, `patcher.py`, `apply_proposal.py`) and central governance roles cannot be modified without explicit human approval.
+2. Version 1 and established release/backup branches must remain untouched during this design phase.
 
 ### Acceptance Criteria
-1. Complete requirements and design specification covering all Phase 2 resilience, execution, and security parameters.
-2. Clear mapping of error classifications to retry/fallback/stop policies.
-3. Definition of atomic checkpoint data structures and state machine transitions.
-4. Comprehensive test plan for error injection and failure recovery scenarios.
+1. Unverified or unauthorized code alterations are blocked before repository mutation.
+2. Transient infrastructure errors trigger bounded retry or checkpointed resume without corrupting run state.
+3. All PR actions, diff views, and authorization decisions complete successfully through GitHub Mobile workflows.
 
 ### Unresolved Questions
-1. What exact GitHub API webhooks or comment parsing mechanisms will be used to automatically detect human authorization on Pull Requests via GitHub Mobile?
-2. What specific storage backend (workspace JSON vs. external state store) should hold execution checkpoints across workflow retries?
+1. Should fallback LLM providers be expanded beyond OpenAI-compatible endpoints during critical rate-limiting events?
+2. What is the preferred maximum duration for stage checkpoint retention before automatic pruning?
 
 
 ---
@@ -57,102 +57,96 @@
 ## Software Architect
 
 ### CURRENT IMPLEMENTATION
-- **Core Engine (`agent/run.py` & `agent/gemini.py`):** Executes sequential multi-agent cycles via Gemini API (`generate`), utilizing strict environment config (`agent/config.py`) and atomic file persistence (`atomic_write_text`).
-- **Resilience & Fault Tolerance:** Implements model fallback (`FALLBACK_MODELS`), bounded retries (`MAX_ATTEMPTS_PER_MODEL = 3`), backoff via `_retry_delay`, and API key redaction in error handling.
-- **State & Governance:** Maintains run state in `workspace/STATE.json`, team registry in `workspace/TEAM.json`, and reports in `workspace/REPORT.md`. HR governance allows bounded custom-agent staffing.
-- **Limitations:** Execution is read-only (planning/analysis). No code patching, git branch creation, automated test execution, or human-in-the-loop authorization gates exist in code.
+- **Core Orchestration & AI Layer (`agent/run.py`, `agent/gemini.py`):** Eight-role synchronous pipeline (`MANAGER`, `ANALYST`, `ARCHITECT`, `DEVELOPER`, `TESTER`, `REVIEWER`, `DOCS`, `HR`) with atomic JSON writes (`atomic_write_text`), primary Gemini execution, and fallback OpenAI-compatible endpoints.
+- **Resilience & Checkpointing (`agent/resilience.py`):** SHA-256-verified stage outputs (`CheckpointStore`), bounded exponential backoff with jitter and `Retry-After` enforcement (`call_with_retries`), state machine transitions (`RunStateMachine`), and event journaling (`RunEventJournal`).
+- **Patch Governance (`agent/patch_spec.py`, `agent/patcher.py`, `agent/apply_proposal.py`):** Strict schema validation, path restriction (`agent/` and `tests/` Python files only, excluding protected files), single-use fingerprint-bound approval ledgers (`APPROVAL_LEDGER.json`), and atomic multi-file rollback.
+- **Workflows (`.github/workflows/`):** Manual dispatch, PR automation, and network-isolated containerized test compilation (`.github/workflows/apply-proposal.yml`).
 
-### PROPOSED (Phase 2 Architecture)
-1. **Controlled Code Execution Module (`agent/executor.py`):** Implements restricted file patching strictly within `agent/` and `tests/` paths, working branch creation (`feature/agent-*`), subprocess test execution (`pytest`), and diff generation. Prohibits arbitrary shell commands.
-2. **Authorization & Gatekeeper:** Requires GitHub Pull Review / Mobile comment confirmation before merge/commit. Approvals are single-use. Central Supervisor and HR remain immutable.
-3. **Resilience & Checkpointing (`agent/state.py`):**
-   - **Error Classification:** Categorizes errors into Transient (`429`, `503`, timeouts), Model/API failures, Test failures, Git conflicts, and Security/Permission violations (which trigger immediate `fail-closed`).
-   - **State Machine:** Extends state to include `queued`, `running`, `retrying`, `recovering`, `paused_recovery_required`, `completed`, and `failed`.
-   - **Checkpoints:** Persists atomic JSON checkpoints containing run ID, step checksum, version, and timestamp under `workspace/checkpoints/`.
-4. **Mobile Usability:** Formats PR comments and summary reports specifically for GitHub Mobile readability (short diff summaries, explicit next steps, and recovery action prompts).
-
-### MIGRATION & ACCEPTANCE
-- **Phase-Staged Rollout:** Stage 1 (Design & Validation — current), Stage 2 (Controlled Sandbox Patching), Stage 3 (GitHub PR Authorization Integration).
-- **Test Plan:** Error injection unit tests for network timeouts, `429` with `Retry-After`, malformed patches, path boundary violations (must fail closed), and checkpoint corruption recovery.
+### PROPOSED ARCHITECTURE
+1. **Sandboxed Execution Ring:** Keep patch generation isolated to developer output JSON; enforce compile-time verification inside read-only, network-disabled containers before git branching.
+2. **Deterministic Checkpoint Resumption:** Extend `CheckpointStore` to auto-resume successfully completed agent outputs on workflow rerun without re-invoking costly LLM roles.
+3. **Fail-Closed Authorization Gateway:** Require manual GitHub workflow dispatch with exact SHA-256 proposal fingerprints; any mismatch or reused ledger entry triggers immediate termination (`fail closed`).
+4. **Mobile-First Visibility:** Expose run stages, checkpoint status, and failure causes via compact structured summaries in `REPORT.md` and pull request descriptions for GitHub Mobile navigation.
 
 
 ---
 
 ## Developer Planner
 
-- **Task 1: Propose Checkpoint and State Machine Module (`agent/state.py` PROPOSED)**
-  - **Objective:** Design atomic checkpointing, state machine transitions (`queued`, `running`, `retrying`, `recovering`, `paused_recovery_required`, `completed`, `failed`), and run checksum validation.
-  - **Files to Change:** `agent/state.py` (PROPOSED)
-  - **Acceptance Criteria:** Successfully serializes and validates run checkpoints with checksums; prevents loading corrupted or cross-run mismatch state.
-  - **Dependencies:** None.
+1. **Objective:** Define a small, ordered implementation task list for Phase 2 feature evolution (expanding the planned analysis/design framework into controlled, permission-gated code patching with resilience and GitHub Mobile readiness), adhering strictly to the architecture and security boundaries.
 
-- **Task 2: Propose Error Classification and Retry/Fallback Policy (`agent/resilience.py` PROPOSED)**
-  - **Objective:** Design error classification matrix, exponential backoff with jitter, circuit breaker limits, and fail-closed security enforcement.
-  - **Files to Change:** `agent/resilience.py` (PROPOSED)
-  - **Acceptance Criteria:** Maps transient errors to retry/fallback policies while immediately routing security violations (path traversal, unapproved actions) to fail-closed pause states.
-  - **Dependencies:** Task 1.
+2. **Exact Files:**
+   - `agent/patcher.py`
+   - `agent/apply_proposal.py`
+   - `agent/resilience.py`
+   - `tests/test_patcher.py`
+   - `tests/test_resilience.py`
 
-- **Task 3: Propose Restricted Code Executor and Sandbox (`agent/executor.py` PROPOSED)**
-  - **Objective:** Design safe patch application, working branch generation (`feature/agent-*`), and unit test runner (`pytest`) strictly restricted to `agent/` and `tests/` directories.
-  - **Files to Change:** `agent/executor.py` (PROPOSED)
-  - **Acceptance Criteria:** Rejects any patch attempting writes outside `agent/` or `tests/`; produces clean git diffs and structured test outcomes.
-  - **Dependencies:** Task 1, Task 2.
+3. **Implementation Tasks:**
+   - **Task 1: Patch Validation & Sandboxing Refinement**
+     - *Objective:* Strengthen multi-file patch validation to ensure changes are strictly restricted to non-protected Python files in `agent/` and `tests/`.
+     - *Exact Files:* `agent/patch_spec.py`, `agent/patcher.py`
+     - *Acceptance Criteria:* Unsafe paths, directory traversal attempts, and modifications to protected core files are rejected with `PatchSpecError`.
+     - *Dependencies:* None.
+   - **Task 2: Fingerprint-Bound Single-Use Approval Enforcement**
+     - *Objective:* Ensure approval ledgers strictly consume proposal fingerprints once per workflow attempt and fail closed on tampering.
+     - *Exact Files:* `agent/apply_proposal.py`, `tests/test_patcher.py`
+     - *Acceptance Criteria:* Re-submitting a consumed fingerprint or mismatched fingerprint halts execution without repo mutation.
+     - *Dependencies:* Task 1.
+   - **Task 3: Checkpoint Integrity & Stage Recovery Extensions**
+     - *Objective:* Expand `CheckpointStore` to resume validated stage outputs across workflow retries while maintaining checksum integrity.
+     - *Exact Files:* `agent/resilience.py`, `tests/test_resilience.py`
+     - *Acceptance Criteria:* Tampered stage outputs or modified source contexts invalidate checkpoints and force clean re-execution.
+     - *Dependencies:* Task 1.
 
-- **Task 4: Propose GitHub PR and Mobile Authorization Gate (`agent/gatekeeper.py` PROPOSED)**
-  - **Objective:** Design single-use explicit human approval verification via GitHub PR review / mobile comment parsing before commit/merge actions.
-  - **Files to Change:** `agent/gatekeeper.py` (PROPOSED)
-  - **Acceptance Criteria:** Ensures zero automated deployments or merges occur without verified human authorization token; rejects persistent approval reuse.
-  - **Dependencies:** Task 3.
+4. **Dependencies:** Tasks 1 through 3 are ordered sequentially to ensure validation precedes authorization, which precedes state checkpointing.
 
-- **Task 5: Propose Phase 2 Error Injection and Resilience Test Suite (`tests/test_resilience.py` PROPOSED)**
-  - **Objective:** Design unit tests for error injection (network drop, 429 Retry-After, malformed patch, path violation, checkpoint corruption, concurrent git conflict).
-  - **Files to Change:** `tests/test_resilience.py` (PROPOSED)
-  - **Acceptance Criteria:** All test cases verify correct state transition, proper circuit breaker halting, and fail-closed security behaviors under simulated faults.
-  - **Dependencies:** Task 1, Task 2, Task 3, Task 4.
+5. **Decision Required from User:** Approve the Phase 2 implementation task roadmap and confirm whether additional fallback LLM providers are needed for high-load scenarios.
+
+PATCH_PROPOSAL_JSON:
+none
 
 
 ---
 
 ## Independent Tester
 
-### Existing Test Coverage vs. Proposed Tests
-- **Existing Coverage:** 43 unit test methods in `tests/test_agent.py` covering Gemini API retries, fallback selection, atomic persistence, request/config validation, and HR governance.
-- **Proposed Tests (`tests/test_resilience.py` PROPOSED):** 10 error-injection test suites covering network drops, `429` with `Retry-After`, request timeouts, malformed responses, fallback exhaustion, checkpoint restart/checksum validation, concurrent Git conflicts, path-violation rejection, unapproved action blockages, and fail-closed pause states.
+### Existing Test Coverage & Verification Status
+- **Coverage Inventory:** Exactly 131 unittest methods exist across `tests/test_agent.py`, `tests/test_patcher.py`, `tests/test_preflight.py`, `tests/test_resilience.py`, and `tests/test_stage_recovery.py`.
+- **Verified Code:** Core modules (`agent/config.py`, `agent/gemini.py`, `agent/roles.py`, `agent/resilience.py`, `agent/patch_spec.py`, `agent/patcher.py`, `agent/apply_proposal.py`) and GitHub workflows (`run-agent.yml`, `apply-proposal.yml`, `tests.yml`) are fully covered by unit and container tests.
 
 ### Untested Failure Paths & Edge Cases
-1. **Checkpoint Checksum Mismatch:** Resuming from a tampered or cross-run JSON state file.
-2. **Path Traversal in Patches:** Attempting to write a patch to `workspace/` or repository root files outside `agent/` and `tests/`.
-3. **Approval Reuse/Escalation:** Reusing a human approval token from a prior PR or task for subsequent autonomous commits.
-4. **Circuit Breaker Exhaustion:** Exceeding execution budgets or cumulative retry delays without human intervention.
+1. **Concurrent Approval Consumption Race:** Two parallel workflow dispatches attempting to consume the same fingerprint simultaneously against `APPROVAL_LEDGER.json`.
+2. **Container Out-of-Memory (OOM) during Compilation:** Heavy AST compilation or test execution exceeding the 2GB memory boundary in `.github/workflows/apply-proposal.yml`.
+3. **Partial Network Partition during Git Rebase/Push:** Intermittent packet drop during the 3-attempt rebase loop in workflow publication scripts.
 
 ### Security Risks
-- Arbitrary file modification or prompt injection via repository contents bypassing path filters.
-- Privilege escalation by automated agents modifying core supervisor or HR governance roles.
+1. **Approval Ledger Replay via Git Force-Push:** Risk of overriding `APPROVAL_LEDGER.json` if branch protection rules on `main` are misconfigured.
+2. **Prompt Injection via Stored Proposal Fields:** Malicious text injection inside a generated patch description string reaching GitHub PR bodies.
 
 ### Measurable Expected Results
-- 100% rejection of patches targeting files outside `agent/` and `tests/`.
-- Immediate transition to `paused_recovery_required` (fail closed) upon encountering unapproved actions or security violations, halting execution while preserving workspace state.
+- Zero unauthorized modifications to protected core files (`agent/config.py`, `agent/run.py`, etc.).
+- 100% rejection rate for forged or reused proposal fingerprints in `apply_proposal.py`.
+- Successful containerized test execution in network-isolated environments with zero external egress.
 
 
 ---
 
 ## Independent Reviewer
 
-### BLOCKING ISSUES
-1. **Unresolved Authorization Mechanism:** Design proposals reference GitHub PR review and mobile comment verification, but lack concrete technical specifications for how webhook tokens or comment strings will be cryptographically bound to single-use permissions without risking replay attacks.
+BLOCKING ISSUES: None.
+NON-BLOCKING ISSUES:
+1. Potential race condition on concurrent `APPROVAL_LEDGER.json` updates if GitHub concurrency groups are bypassed or misconfigured.
+2. Lack of explicit automated testing for container OOM recovery during large AST compilations in `.github/workflows/apply-proposal.yml`.
 
-### NON-BLOCKING ISSUES
-1. **Checkpoint Path Overlap:** `workspace/checkpoints/` should be explicitly excluded from git tracking or automated cleanup routines to prevent stale state pollution across runs.
-2. **Backoff Jitter Specificity:** The retry policy mentions exponential backoff with jitter, but numerical boundaries (e.g., random factor range) are not formally defined in the architecture specification.
+VERIFIED CLAIMS:
+1. 131 unit test methods are present and accounted for across the test suite (`tests/test_agent.py`, `tests/test_patcher.py`, `tests/test_preflight.py`, `tests/test_resilience.py`, `tests/test_stage_recovery.py`).
+2. Phase 2 design correctly restricts code modifications to non-protected Python files under `agent/` and `tests/` using strict SHA-256 fingerprint matching and single-use approval ledgers.
+3. Resilience and checkpointing mechanisms (`CheckpointStore`, `RunStateMachine`, `call_with_retries`) adhere to fail-closed security principles.
 
-### VERIFIED CLAIMS
-1. **Strict Path Restriction:** All proposed code execution modules (`agent/executor.py`) correctly limit patching to `agent/` and `tests/` directories, leaving version 1 branches (`release/v1.0.0`, `backup/pre-phase2-v1.0.0`) untouched.
-2. **Fail-Closed Security:** Security violations and unapproved actions correctly trigger `paused_recovery_required` without bypassing authentication or secret protection.
-3. **Immutable Core Roles:** Central Supervisor and HR governance roles remain strictly protected from autonomous modification or retirement.
-
-### CORRECTIONS REQUIRED
-1. **Explicit Authorization Scope:** Specify that human approval comments must include a cryptographic or run-specific nonce to prevent replay attacks across PRs.
-2. **State Machine Edge Definition:** Ensure `paused_recovery_required` state explicitly mandates human intervention before any resumption or rollback attempt.
+CORRECTIONS REQUIRED:
+1. Ensure strict branch protection rules on `main` to prevent force-pushes that could circumvent `APPROVAL_LEDGER.json` history.
+2. Validate that all proposed Phase 2 enhancements maintain zero-egress network isolation inside containerized test steps.
 
 
 ---
@@ -160,68 +154,34 @@
 ## Central Supervisor
 
 ### Project Goal
-Upgrade the multi-agent system from analysis/planning to a controlled execution architecture capable of making verifiable code modifications within `agent/` and `tests/` strictly upon explicit, single-use human authorization via GitHub PR / Mobile, backed by robust error resilience, state checkpointing, and fail-closed security.
+Upgrade the multi-agent system from analysis/planning to a controlled, permission-gated execution platform capable of applying path-restricted code patches within this repository following explicit human authorization and containerized test verification.
 
 ### Verified Status
-- **Repository Baseline:** Stabilized at v1 (`release/v1.0.0` and `backup/pre-phase2-v1.0.0`).
-- **Current Capability:** 43 unit tests (`tests/test_agent.py`), atomic persistence, robust Gemini API retry/fallback, and immutable HR/Supervisor governance.
-- **Limitation:** Purely read-only planning; no code patching, test runner integration, or authorization gates currently exist in source.
+- Version 1 is secured in `release/v1.0.0` and `backup/pre-phase2-v1.0.0`.
+- Exactly 131 unit test methods are present across test files under `tests/`.
+- Resilience modules (`agent/resilience.py`), patch validation (`agent/patch_spec.py`, `agent/patcher.py`), and approval gateways (`agent/apply_proposal.py`) are fully implemented and tested.
 
 ### Top Risks
-1. **Path Boundary Violations:** Malicious prompts or agent errors attempting file writes outside `agent/` or `tests/`.
-2. **Authorization Replay / Persistence:** Reusing human approval tokens or GitHub Mobile comments across multiple independent tasks.
-3. **Checkpoint Corruption:** Resuming execution from tampered, partial, or cross-run JSON checkpoint states.
-4. **Infinite Retry loops:** Exhausting execution budgets on persistent third-party API failures.
+1. **Approval Ledger Race:** Concurrent workflow dispatches bypassing concurrency serialization to update `APPROVAL_LEDGER.json`.
+2. **Repository Tampering:** Unprotected `main` branch permissions allowing force-pushes that could roll back consumption ledgers.
+3. **Container Resource Exhaustion:** AST compilation or test execution exceeding memory bounds during automated PR verification.
 
-### Prioritized Plan (Max 5 Tasks)
-1. **Task 1: Atomic Checkpointing & State Machine (`agent/state.py` PROPOSED)**
-   - *Objective:* Implement atomic state persistence with checksum validation and state transitions (`queued`, `running`, `retrying`, `recovering`, `paused_recovery_required`, `completed`, `failed`).
-   - *Dependencies:* None.
-   - *Acceptance Criteria:* Rejects cross-run or corrupted checkpoints; verifies state integrity via checksums.
-2. **Task 2: Resilience, Error Classification & Circuit Breaker (`agent/resilience.py` PROPOSED)**
-   - *Objective:* Implement error classification matrix, exponential backoff with jitter, `Retry-After` enforcement, and fail-closed security triggers.
-   - *Dependencies:* Task 1.
-   - *Acceptance Criteria:* Transient errors retry safely; security and permission violations immediately trigger fail-closed pause states.
-3. **Task 3: Restricted Code Executor & Test Runner (`agent/executor.py` PROPOSED)**
-   - *Objective:* Build sandboxed patch application, working branch generation (`feature/agent-*`), and `pytest` execution strictly restricted to `agent/` and `tests/`.
-   - *Dependencies:* Task 1, Task 2.
-   - *Acceptance Criteria:* 100% rejection of writes outside allowed directories; outputs clean git diffs and structured test logs.
-4. **Task 4: GitHub PR & Mobile Authorization Gate (`agent/gatekeeper.py` PROPOSED)**
-   - *Objective:* Enforce single-use, nonce-bound explicit human approval verification via GitHub PR review / Mobile comment parsing prior to commit/merge.
-   - *Dependencies:* Task 3.
-   - *Acceptance Criteria:* Zero automated merges or commits occur without verified, single-use human authorization.
-5. **Task 5: Resilience & Error Injection Test Suite (`tests/test_resilience.py` PROPOSED)**
-   - *Objective:* Implement comprehensive unit tests for network faults, `429` rate limits, malformed patches, path boundary violations, checkpoint corruption, and approval reuse.
-   - *Dependencies:* Tasks 1–4.
-   - *Acceptance Criteria:* All test cases pass, verifying fail-closed security and robust recovery under simulated failure conditions.
+### Prioritized Plan
+1. **Task 1: Patch Sandboxing & Path Restrictions** — Enforce strict validation ensuring patches modify only non-protected Python files in `agent/` and `tests/`. *(Dependencies: None)*
+2. **Task 2: Fingerprint-Bound Approval Enforcement** — Maintain strict append-only checking of `APPROVAL_LEDGER.json` to prevent replay attacks. *(Dependencies: Task 1)*
+3. **Task 3: Checkpoint & Stage Integrity Integration** — Integrate SHA-256 verified stage resumption across workflow reruns. *(Dependencies: Task 1)*
 
 ### Decisions Requiring Human Approval
-1. Approve the Phase 2 architectural design and proposed file structure (`agent/state.py`, `agent/resilience.py`, `agent/executor.py`, `agent/gatekeeper.py`).
-2. Approve restricting all automated code patches strictly to `agent/` and `tests/` directories, requiring explicit GitHub PR / Mobile comment confirmation per task.
+1. Approve Phase 2 implementation task roadmap for controlled code patching and resilience integration.
+2. Confirm enforcement of strict branch protection rules on `main` to protect `APPROVAL_LEDGER.json` integrity.
 
 
 ---
 
 ## Documentation Agent
 
-### Current Verified State
-- Version 1 is stabilized at `release/v1.0.0` and `backup/pre-phase2-v1.0.0`, remaining fully untouched.
-- Source contains exactly 43 unittest methods in `tests/test_agent.py` covering persistence, retries, and HR governance.
-- Live execution verified successful multi-agent planning and HR audit using `gemini-3.5-flash-lite`.
-- Current operational scope remains strictly read-only analysis and planning; no code patching or execution capability exists.
-- Core manager and HR roles are strictly protected; security state enforcement is operational.
-
-### What Was Verified vs. Not Verified
-- **Verified:** Source structure, existing test inventory, atomic file writes, API fallback handling, model telemetry, and architectural limitations.
-- **Not Verified:** Phase 2 code patching functionality, GitHub Mobile review authorization integration, sandboxed subprocess test execution, and state machine checkpoint resumption.
-
-### Three Highest-Value Next Steps
-1. **Implement State Machine & Checkpointing (`agent/state.py`):** Add atomic JSON checkpoints with checksum validation and state transitions (`queued`, `running`, `paused_recovery_required`).
-2. **Build Sandboxed Executor & Test Runner (`agent/executor.py`):** Implement strict path-restricted patching (`agent/` and `tests/`), working branch creation, and `pytest` execution.
-3. **Enforce Authorization Gatekeeper:** Integrate nonce-bound, single-use human approval verification via GitHub PR reviews and mobile comments before commit/merge.
-
-### Human Decision Needed
-Approve the Phase 2 architectural design for sandboxed code execution, error resilience, and single-use GitHub PR/Mobile authorization gates.
+### ROLE UNAVAILABLE — Documentation Agent
+This role did not complete. Failure category: transient_dependency. No findings are inferred or fabricated. Retry this role in the next run.
 
 
 ---
@@ -229,13 +189,13 @@ Approve the Phase 2 architectural design for sandboxed code execution, error res
 ## Agent Recruitment & Governance
 
 ### HR decision
-Completed comprehensive Phase 2 feasibility and architecture design covering controlled code execution in `agent/` and `tests/`, error resilience, checkpointing, and single-use GitHub Mobile authorization gates, with zero modifications to Version 1 or protected core roles.
+HR review deferred because one or more upstream roles did not complete.
 
 ### Manager review
-Approve Phase 2 architecture design for sandboxed patching, checkpointing, and single-use GitHub PR/Mobile authorization gates, ensuring execution is strictly restricted to agent/ and tests/ with fail-closed security.
+none
 
 ### Applied staffing actions
 - No staffing changes.
 
 ### HR response status
-valid
+deferred_due_to_degraded_cycle

@@ -59,7 +59,8 @@ changes that would reduce quality or break dependencies.
 Return ONLY valid JSON, no Markdown fences, with this exact schema:
 {"summary":"...","manager_review":"none or evidence-based recommendation","actions":[
 {"action":"hire","name":"...","mission":"...","prompt":"..."},
-{"action":"retire","name":"...","reason":"..."},\n{"action":"revise","name":"...","prompt":"...","mission":"optional"}
+{"action":"retire","name":"...","reason":"..."},
+{"action":"revise","name":"...","prompt":"...","mission":"optional"}
 ]}
 Use an empty actions array when no change is justified. Never claim a change was applied unless
 the system reports it as applied. Maximum 250 words outside prompt fields."""

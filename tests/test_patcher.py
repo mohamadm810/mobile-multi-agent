@@ -185,6 +185,34 @@ class PatchPreparationTests(unittest.TestCase):
             with self.assertRaisesRegex(PatchSpecError, "repository owner"):
                 main()
 
+    def test_apply_proposal_rejects_dispatch_from_non_main_branch(self):
+        import os
+        from unittest.mock import patch
+        from agent.apply_proposal import main
+
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_ACTOR": "mohamadm810",
+            "GITHUB_REF": "refs/heads/feature/other",
+            "PATCH_AUTHORIZATION": "APPLY_TO_BRANCH",
+        }, clear=True):
+            with self.assertRaisesRegex(PatchSpecError, "from main"):
+                main()
+
+    def test_apply_proposal_rejects_review_only_choice(self):
+        import os
+        from unittest.mock import patch
+        from agent.apply_proposal import main
+
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_ACTOR": "mohamadm810",
+            "GITHUB_REF": "refs/heads/main",
+            "PATCH_AUTHORIZATION": "REVIEW_ONLY",
+        }, clear=True):
+            with self.assertRaisesRegex(PatchSpecError, "APPLY_TO_BRANCH"):
+                main()
+
     def test_rejects_missing_target_file(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(PatchSpecError, "existing file"):

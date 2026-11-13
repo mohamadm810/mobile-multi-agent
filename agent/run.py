@@ -342,7 +342,9 @@ def run_cycle(request=None, generator=generate):
         + "\n\nReturn the required strict JSON. Apply changes only to custom agents. "
         "Any manager concern must be a recommendation for human approval."
     )
+    hr_started = __import__("time").perf_counter()
     hr_output = generator(HR, hr_prompt)
+    hr_duration = round(__import__("time").perf_counter() - hr_started, 3)
     try:
         hr_decision, hr_applied = apply_hr_decisions(hr_output, registry)
         hr_status = "valid"
@@ -359,6 +361,7 @@ def run_cycle(request=None, generator=generate):
         + "\n\n### HR response status\n" + hr_status
     )
     role_metrics["Agent Recruitment & Governance"] = {
+        "duration_seconds": hr_duration,
         "status": "success" if hr_status == "valid" else "rejected",
         "output_characters": len(hr_output),
     }

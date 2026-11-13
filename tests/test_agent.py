@@ -185,6 +185,20 @@ class RepositoryEvidenceTests(unittest.TestCase):
         self.assertIn("if __name__ == \"__main__\":", context)
 
 
+class AtomicPersistenceTests(unittest.TestCase):
+    def test_atomic_write_replaces_existing_file(self):
+        from agent.run import atomic_write_text
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "STATE.json"
+            target.write_text('{"status":"old"}', encoding="utf-8")
+            atomic_write_text(target, '{"status":"new"}\\n')
+            self.assertEqual(
+                json.loads(target.read_text(encoding="utf-8")),
+                {"status": "new"},
+            )
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["STATE.json"])
+
+
 class OrchestrationTests(unittest.TestCase):
     def test_documentation_agent_receives_deterministic_run_evidence(self):
         from agent.run import run_cycle

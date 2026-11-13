@@ -69,6 +69,38 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_count, 4)
         self.assertIn("fallback-model", mocked_urlopen.call_args_list[-1].args[0].full_url)
 
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"})
+    @patch("agent.gemini.time.sleep")
+    @patch("agent.gemini.urllib.request.urlopen")
+    def test_exhausts_primary_and_all_fallback_models(self, mocked_urlopen, _sleep):
+        import agent.gemini as gemini
+
+        failures = [
+            urllib.error.HTTPError(
+                "https://example.invalid", 503, "temporarily unavailable", {},
+                io.BytesIO(b"temporary outage")
+            )
+            for _ in range(6)
+        ]
+        mocked_urlopen.side_effect = failures
+
+        with patch("agent.gemini.MODEL", "primary-model"), patch(
+            "agent.gemini.ACTIVE_MODEL", "primary-model"
+        ), patch("agent.gemini.FALLBACK_MODELS", ["fallback-model"]):
+            gemini.USED_MODELS.clear()
+            gemini.ATTEMPTED_MODELS.clear()
+            with self.assertRaises(AgentError) as caught:
+                generate("role", "prompt")
+
+        self.assertIn("HTTP 503 on fallback-model", str(caught.exception))
+        self.assertNotIn("test-key", str(caught.exception))
+        self.assertEqual(mocked_urlopen.call_count, 6)
+        self.assertEqual(gemini.ATTEMPTED_MODELS, ["primary-model", "fallback-model"])
+        self.assertEqual(gemini.USED_MODELS, [])
+        self.assertEqual(gemini.ACTIVE_MODEL, "primary-model")
+
+
     def test_reset_run_tracking_clears_models_and_restores_primary(self):
         import agent.gemini as gemini
         gemini.USED_MODELS.append("fallback-model")

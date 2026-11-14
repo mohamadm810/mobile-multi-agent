@@ -434,7 +434,7 @@ class OrchestrationTests(unittest.TestCase):
 
 
     def test_documentation_agent_receives_deterministic_run_evidence(self):
-        from agent.run import run_cycle
+        from agent.run import run_cycle, get_unit_test_inventory
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             prompts = []
@@ -453,7 +453,9 @@ class OrchestrationTests(unittest.TestCase):
             docs_prompt = prompts[-2][1]
             self.assertIn("LIVE EXECUTION EVIDENCE", docs_prompt)
             self.assertIn("DETERMINISTIC TEST INVENTORY", docs_prompt)
-            self.assertIn("Exactly 133 unittest methods", docs_prompt)
+            self.assertIn(
+                f"Exactly {len(get_unit_test_inventory())} unittest methods", docs_prompt
+            )
             self.assertNotIn("Source contains", docs_prompt)
             self.assertNotIn("test_documentation_agent_receives_deterministic_run_evidence", docs_prompt)
             self.assertTrue((root / "REPORT.md").is_file())

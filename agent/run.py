@@ -537,16 +537,22 @@ def run_cycle(request=None, generator=generate):
     )
     checkpoint.set_metadata("patch_proposal_status", patch_proposal_status)
 
+    # HR needs run outcomes, roster, and concise role findings—not the full
+    # repository dump or exhaustive test inventory used by technical reviewers.
+    # Keeping this prompt bounded reduces latency and transient provider failures.
     hr_prompt = (
-        context + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
+        "USER REQUEST (bounded):\n" + request[:6000]
+        + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
         + json.dumps({"custom_agents": custom_agents, "disabled_agents": registry["disabled_agents"],
-                      "role_overrides": list(registry["role_overrides"].keys())}, ensure_ascii=False)[:8000]
+                      "role_overrides": list(registry["role_overrides"].keys())}, ensure_ascii=False)[:4000]
         + "\n\nPERFORMANCE METRICS (latency and output size; not quality scores):\n"
         + json.dumps(role_metrics, ensure_ascii=False)
         + "\n\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\n"
-        + "\n\n".join(f"## {key}\n{value[:2500]}" for key, value in outputs.items())
-        + "\n\nReturn the required strict JSON. Apply changes only to non-manager agents. "
-        "Any manager concern must be a recommendation for human approval."
+        + "\n\n".join(f"## {key}\n{value[:1400]}" for key, value in outputs.items())
+        + "\n\nAudit only the supplied evidence. Do not invent staffing needs. "
+        "Return the exact strict JSON schema from your role instructions. "
+        "Use an empty actions array unless a concrete, recurring gap is demonstrated. "
+        "Apply changes only to non-manager agents; manager concerns require human approval."
     )
     hr_started = __import__("time").perf_counter()
     journal.record("stage_started", stage="Agent Recruitment & Governance", status="running")
@@ -565,7 +571,7 @@ def run_cycle(request=None, generator=generate):
         if hr_output is None:
             try:
                 hr_output = call_with_retries(
-                    lambda: generator(HR, hr_prompt), max_attempts=1,
+                    lambda: generator(HR, hr_prompt), max_attempts=2,
                     max_elapsed_seconds=420.0, circuit_breaker=dependency_breaker,
                 )
                 checkpoint.record_stage("__hr_output__", hr_output)

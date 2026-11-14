@@ -83,6 +83,113 @@ class AgentStageRecoveryTests(unittest.TestCase):
                 self.assertNotIn(run_module.DEVELOPER, calls[first_call_count:])
                 self.assertIn(run_module.HR, calls[first_call_count:])
 
+    def test_documentation_agent_uses_compact_context_retries_transiently_and_reports_truthfully(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "workspace"
+            workspace.mkdir()
+            request_file = workspace / "REQUEST.md"
+            request_file.write_text("Prepare a verified handoff.", encoding="utf-8")
+            state_file = workspace / "STATE.json"
+            report_file = workspace / "REPORT.md"
+            team_file = workspace / "TEAM.json"
+            calls = []
+            docs_prompts = []
+            fail_docs_once = {"value": True}
+
+            def generator(role, prompt):
+                calls.append(role)
+                if role == run_module.DOCS:
+                    docs_prompts.append(prompt)
+                    if fail_docs_once["value"]:
+                        fail_docs_once["value"] = False
+                        raise AgentError("temporary provider outage", retryable=True)
+                    return "Executive handoff based on verified role outputs."
+                if role == run_module.HR:
+                    return json.dumps({
+                        "summary": "No staffing changes are justified.",
+                        "manager_review": "none",
+                        "actions": [],
+                    })
+                if role == run_module.DEVELOPER:
+                    return "Plan only.\\nPATCH_PROPOSAL_JSON:\\nnone"
+                return f"Verified output for {role}."
+
+            registry = {
+                "version": 1, "custom_agents": [], "archived_agents": [],
+                "role_overrides": {}, "disabled_agents": [],
+            }
+            patches = [
+                patch.object(run_module, "WORKSPACE", workspace),
+                patch.object(run_module, "REQUEST_FILE", request_file),
+                patch.object(run_module, "STATE_FILE", state_file),
+                patch.object(run_module, "REPORT_FILE", report_file),
+                patch.object(run_module, "TEAM_FILE", team_file),
+                patch.object(run_module, "read_repository_context", return_value="### REPOSITORY FILE: " + ("x" * 100000)),
+                patch.object(run_module, "repository_fingerprint", return_value="stable-source"),
+                patch.object(run_module, "get_unit_test_inventory", return_value=["tests/test_example.py:test_ok"]),
+                patch.object(run_module, "read_team_registry", return_value=registry.copy()),
+                patch.object(run_module, "reset_run_tracking"),
+            ]
+            original_retry = run_module.call_with_retries
+            def no_wait_retry(operation, **kwargs):
+                kwargs["sleep"] = lambda _delay: None
+                return original_retry(operation, **kwargs)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patch.object(run_module, "call_with_retries", side_effect=no_wait_retry):
+                run_module.run_cycle(generator=generator)
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(calls.count(run_module.DOCS), 2)
+            self.assertNotIn("REPOSITORY FILE", docs_prompts[0])
+            self.assertLess(len(docs_prompts[0]), 20000)
+            self.assertEqual(state["status"], "planning_review_required")
+            self.assertIn("Documentation Agent", state["completed_agents"])
+            self.assertEqual(state["degraded_agents"], [])
+            self.assertEqual(state["hr_status"], "valid")
+
+    def test_degraded_role_is_not_listed_as_completed_agent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "workspace"
+            workspace.mkdir()
+            request_file = workspace / "REQUEST.md"
+            request_file.write_text("Prepare a verified handoff.", encoding="utf-8")
+            state_file = workspace / "STATE.json"
+            report_file = workspace / "REPORT.md"
+            team_file = workspace / "TEAM.json"
+
+            def generator(role, prompt):
+                if role == run_module.DOCS:
+                    raise AgentError("temporary provider outage", retryable=True)
+                if role == run_module.HR:
+                    raise AssertionError("HR must be deferred after a degraded upstream role")
+                if role == run_module.DEVELOPER:
+                    return "Plan only.\\nPATCH_PROPOSAL_JSON:\\nnone"
+                return f"Verified output for {role}."
+
+            registry = {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}
+            patches = [
+                patch.object(run_module, "WORKSPACE", workspace),
+                patch.object(run_module, "REQUEST_FILE", request_file),
+                patch.object(run_module, "STATE_FILE", state_file),
+                patch.object(run_module, "REPORT_FILE", report_file),
+                patch.object(run_module, "TEAM_FILE", team_file),
+                patch.object(run_module, "read_repository_context", return_value=""),
+                patch.object(run_module, "repository_fingerprint", return_value="stable-source"),
+                patch.object(run_module, "get_unit_test_inventory", return_value=[]),
+                patch.object(run_module, "read_team_registry", return_value=registry.copy()),
+                patch.object(run_module, "reset_run_tracking"),
+            ]
+            original_retry = run_module.call_with_retries
+            def no_wait_retry(operation, **kwargs):
+                kwargs["sleep"] = lambda _delay: None
+                return original_retry(operation, **kwargs)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9], patch.object(run_module, "call_with_retries", side_effect=no_wait_retry):
+                run_module.run_cycle(generator=generator)
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "completed_with_degraded_roles")
+            self.assertIn("Documentation Agent", state["degraded_agents"])
+            self.assertNotIn("Documentation Agent", state["completed_agents"])
+            self.assertNotIn("Agent Recruitment & Governance", state["completed_agents"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -421,20 +421,20 @@ def run_cycle(request=None, generator=generate):
             # Documentation synthesizes verified role outputs; it does not need the full
             # repository dump or 131 individual test names. Keep this request compact.
             prompt_context = (
-                "USER REQUEST:\\n" + request
-                + "\\n\\nVERIFIED PRIOR ROLE OUTPUTS (reference only; do not repeat):\\n" + prior
-                + "\\n\\nDETERMINISTIC TEST INVENTORY: Exactly "
+                "USER REQUEST:\n" + request
+                + "\n\nVERIFIED PRIOR ROLE OUTPUTS (reference only; do not repeat):\n" + prior
+                + "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
                 + str(len(unit_test_methods))
                 + " unittest methods exist across tests/. This is an inventory, not a test execution result."
-                + "\\n\\nLIVE EXECUTION EVIDENCE: Earlier role calls succeeded in this live run. "
+                + "\n\nLIVE EXECUTION EVIDENCE: Earlier role calls succeeded in this live run. "
                 + "Successful model(s): " + (", ".join(USED_MODELS) or "none recorded")
                 + ". Attempted model(s): " + (", ".join(ATTEMPTED_MODELS) or "none recorded")
                 + ". The separate GitHub Tests workflow result is not available here; do not guess it."
             )
         prompt = (
             prompt_context
-            + "\\n\\nYOUR ROLE FOR THIS STEP: " + name
-            + "\\nReturn only your role's deliverable. Do not write sections for other roles, "
+            + "\n\nYOUR ROLE FOR THIS STEP: " + name
+            + "\nReturn only your role's deliverable. Do not write sections for other roles, "
               "do not copy prior outputs, and obey the word limit in your role instructions."
         )
         started = __import__("time").perf_counter()

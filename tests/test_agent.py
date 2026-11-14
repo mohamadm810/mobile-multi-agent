@@ -413,8 +413,10 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(len(outputs), 8)
             docs_prompt = prompts[-2][1]
             self.assertIn("LIVE EXECUTION EVIDENCE", docs_prompt)
-            self.assertIn("Source contains", docs_prompt)
-            self.assertIn("test_documentation_agent_receives_deterministic_run_evidence", docs_prompt)
+            self.assertIn("DETERMINISTIC TEST INVENTORY", docs_prompt)
+            self.assertIn("Exactly 133 unittest methods", docs_prompt)
+            self.assertNotIn("Source contains", docs_prompt)
+            self.assertNotIn("test_documentation_agent_receives_deterministic_run_evidence", docs_prompt)
             self.assertTrue((root / "REPORT.md").is_file())
             saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
             self.assertEqual(len(saved_state["completed_agents"]), 8)

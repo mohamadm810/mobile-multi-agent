@@ -1,15 +1,15 @@
 {
-  "last_run_utc": "2026-11-13T17:11:00.375388+00:00",
+  "last_run_utc": "2026-11-14T03:25:27.730883+00:00",
   "request_snapshot": "# درخواست فاز دوم — طراحی اجرای کنترل‌شده و ارتقای تصمیم‌گیری\n\n## هدف\nنسخه ۱ در شاخه‌های `release/v1.0.0` و `backup/pre-phase2-v1.0.0` تثبیت شده است. اکنون فقط امکان‌سنجی و طراحی فاز دوم همین مخزن را انجام بده: ارتقای تیم از سامانه تحلیل/برنامه‌ریزی به سامانه‌ای که بتواند پس از مجوز صریح انسان، تغییرات محدود و قابل‌بازبینی را در همین مخزن انجام دهد.\n\n## محدوده بررسی\n1. کیفیت تصمیم‌گیری چندایجنتی: استقلال نقش‌ها، جلوگیری از توافق کاذب، ارزیابی شواهد، حل تعارض، تشخیص عدم‌قطعیت و جلوگیری از تکرار خروجی.\n2. اجرای کنترل‌شده کد: پیشنهاد تغییر، ایجاد شاخه کاری، اعمال patch فقط در همین مخزن، اجرای تست، بازبینی مستقل و ارائه diff.\n3. دروازه‌های مجوز: هیچ تغییر اجرایی، commit، merge، انتشار یا deploy بدون سطح مجوز صریح و متناسب انجام نشود. تأیید یک کار، مجوز دائمی برای کارهای بعدی نیست.\n4. امنیت: محدودسازی ابزارها و مسیر فایل، جلوگیری از prompt injection در محتوای مخزن، حفاظت از secrets، ثبت رویدادها و جلوگیری از اجرای shell دلخواه.\n5. قابلیت بازگشت: شاخه/commit امن، امکان لغو تغییر، حفظ گزارش و تاریخچه تصمیم‌ها.\n6. تجربه موبایل: گردش کار قابل استفاده از GitHub Mobile برای ثبت درخواست، تأیید تغییر، مشاهده diff، تست و نتیجه.\n\n## قواعد\n- ابتدا کل سورس و تست‌های فعلی را بررسی کن؛ قابلیت موجود را دوباره پیشنهاد نده.\n- شواهد را با مسیر فایل/تابع مشخص کن؛ mock، تست واقعی، اجرای زنده و فرض معماری را جدا نگه دار.\n- نسخه ۱ و دو شاخه تثبیت‌شده آن را تغییر نده.\n- در این چرخه فقط تحلیل و طراحی انجام بده؛ هیچ فایل اجرایی را تغییر نده و هیچ قابلیت اجرایی را فعال نکن.\n- از ایجاد ایجنت جدید یا استخدام خودکار اجتناب کن، مگر اینکه شکاف تکرارشونده و مستند وجود داشته باشد.\n- مدیر مرکزی و مدیر منابع انسانی محافظت‌شده‌اند؛ هر تغییر در اختیارات آن‌ها فقط با تأیید انسان ممکن است.\n- اگر اجرای خودکار ایمن با معماری فعلی ممکن نیست، صریحاً بگو و کوچک‌ترین معماری جایگزین را پیشنهاد بده.\n\n## خروجی مورد انتظار\n1. وضعیت واقعی فعلی و محدودیت‌های آن.\n2. حداکثر ۵ شکاف اولویت‌بندی‌شده با شاهد و اثر.\n3. طرح پیشنهادی فاز دوم، مرحله‌بندی‌شده و کم‌ریسک.\n4. ماتریس مجوزها: چه کاری خودکار، نیازمند تأیید، یا ممنوع باشد.\n5. معیار پذیرش و تست‌های لازم برای هر مرحله.\n6. تصمیم‌های مشخصی که باید از کاربر گرفته شود.\n\n## معیار کیفیت\nپیشنهادها باید اجرایی، حداقلی و قابل‌آزمون باشند. هیچ ادعای پیاده‌سازی یا تست موفق بدون شاهد پذیرفته نیست.\n\n## افزوده جدید: سامانه تاب‌آوری و بازیابی (Resilience & Recovery)\n\nاین بخش الزام معماری فاز دوم است و باید در کل چرخه ایجنت‌ها، ابزارها و گردش‌کار GitHub لحاظ شود.\n\n### هدف\nخطای موقت یا شکست یک جزء نباید باعث از دست رفتن پیشرفت یا توقف غیرضروری کل چرخه شود؛ سیستم باید تا جای ممکن بازیابی کند و در صورت نبود مسیر امن، در وضعیت قابل ادامه متوقف شود.\n\n### مواردی که باید طراحی شوند\n1. **طبقه‌بندی خطا:** خطاهای موقت (شبکه، timeout، rate limit)، خطاهای مدل/API، خروجی ناقص یا نامعتبر، شکست ایجنت، شکست ابزار، خطای تست، تعارض Git و خطاهای امنیتی/مجوزی از هم تفکیک شوند.\n2. **Retry کنترل‌شده:** تعداد تلاش محدود، backoff نمایی همراه jitter، رعایت Retry-After، سقف زمانی کل و جلوگیری از retry برای خطاهای قطعی یا امنیتی.\n3. **Fallback:** مدل، ایجنت یا ابزار جایگزین فقط در صورت سازگاری وظیفه و سطح دسترسی مجاز استفاده شود؛ fallback نباید مجوز یا محدودیت امنیتی را تضعیف کند.\n4. **Checkpoint و ادامه اجرا:** خروجی معتبر هر مرحله با شناسه اجرا، ورودی/نسخه، وضعیت، زمان و checksum ذخیره شود؛ اجرای مجدد فقط از checkpoint معتبر و سازگار ادامه یابد. داده ناقص یا متعلق به اجرای دیگر قابل بازیابی تلقی نشود.\n5. **ایزوله‌سازی شکست:** خطای یک ایجنت تا حد ممکن محدود به همان وظیفه باشد؛ وابستگی‌های مراحل بعدی صریح باشند و خروجی شکست‌خورده به‌عنوان خروجی موفق به مراحل بعد داده نشود.\n6. **مدیریت توقف امن:** در نبود fallback امن، چرخه با وضعیت paused_recovery_required یا وضعیت صریح مشابه متوقف شود، آخرین پیشرفت حفظ شود و اقدام لازم از انسان خواسته شود.\n7. **ثبت رویداد و قابلیت مشاهده:** علت طبقه‌بندی‌شده، تعداد تلاش‌ها، مسیرهای fallback، checkpoint بازیابی‌شده، مدت تأخیر و نتیجه نهایی ثبت شوند؛ secrets و داده حساس هرگز وارد گزارش نشوند.\n8. **Circuit breaker و بودجه اجرا:** برای سرویس‌های ناپایدار از تلاش‌های تکراری بی‌پایان جلوگیری شود؛ سقف retry، زمان، تعداد fallback و بودجه درخواست تعریف شود.\n9. **امنیت و مجوزها:** خطاهای permission denied، path violation، تزریق prompt، شکست اعتبارسنجی patch و درخواست تأییدنشده هرگز با retry یا fallback دور زده نشوند. هیچ اقدام حساس بدون مجوز مستقل و صریح کاربر انجام نشود.\n10. **سازگاری با موبایل:** وضعیت بازیابی، آخرین مرحله موفق، علت توقف و اقدام بعدی باید در گزارش/PR قابل فهم و قابل پیگیری از GitHub Mobile باشد.\n\n### خروجی مورد انتظار این بخش\n- ماتریس نوع خطا ← سیاست retry/fallback/stop/escalate.\n- طرح داده checkpoint و سازگاری نسخه/شناسه اجرا.\n- ماشین حالت چرخه شامل queued/running/retrying/recovering/paused/completed/failed (یا مدل بهتر با توجیه).\n- سیاست سقف تلاش، backoff، timeout، circuit breaker و بودجه.\n- تست‌های تزریق خطا برای هر دسته، شامل قطع شبکه، 429/Retry-After، timeout، پاسخ خراب، شکست fallback، restart پس از checkpoint، checkpoint ناسازگار، تعارض همزمان Git و خطاهای مجوز.\n- تفکیک روشن قابلیت‌های فعلی، طراحی پیشنهادی و قابلیت‌های پیاده‌سازی‌نشده.\n\n### قید غیرقابل مذاکره\nتاب‌آوری به معنی «ادامه به هر قیمت» نیست. امنیت، ",
   "request_fingerprint": "14c5e7d487f6fdc61da5a1634cc232f8efbee7f4e6e6588c7daa09ed0c8b0403",
-  "source_fingerprint": "05f42632c82d3f9958d23d35d4f41db8e32a2b9866f8c27dfa68dbd9b5b80aec",
+  "source_fingerprint": "37f6092d2977f6abc52dfbc7ca20a305d75084f2bada2e9bd04a54927ee4e32f",
   "status": "completed_with_degraded_roles",
   "degraded_agents": [
-    "Documentation Agent"
+    "Agent Recruitment & Governance"
   ],
   "recovery": {
     "status": "retry_available",
-    "last_successful_stage": "Central Supervisor",
+    "last_successful_stage": "Documentation Agent",
     "strategy": "checkpoint_resume",
     "action_required": "Rerun Run Multi-Agent. Completed stages before the first failure are checkpointed; dependent stages will be regenerated."
   },
@@ -21,8 +21,7 @@
     "Independent Tester",
     "Independent Reviewer",
     "Central Supervisor",
-    "Documentation Agent",
-    "Agent Recruitment & Governance"
+    "Documentation Agent"
   ],
   "resumed_agents": [],
   "checkpoint_resumed_from_run_id": null,
@@ -34,44 +33,43 @@
   "patch_proposal_path": null,
   "role_metrics": {
     "Requirements Analyst": {
-      "duration_seconds": 2.209,
-      "output_characters": 1717,
+      "duration_seconds": 2.575,
+      "output_characters": 2263,
       "status": "success"
     },
     "Software Architect": {
-      "duration_seconds": 5.683,
-      "output_characters": 3540,
+      "duration_seconds": 1.758,
+      "output_characters": 937,
       "status": "success"
     },
     "Developer Planner": {
-      "duration_seconds": 3.053,
-      "output_characters": 2854,
+      "duration_seconds": 2.86,
+      "output_characters": 2328,
       "status": "success"
     },
     "Independent Tester": {
-      "duration_seconds": 2.685,
-      "output_characters": 2711,
+      "duration_seconds": 2.32,
+      "output_characters": 1779,
       "status": "success"
     },
     "Independent Reviewer": {
-      "duration_seconds": 1.994,
-      "output_characters": 1226,
+      "duration_seconds": 1.841,
+      "output_characters": 920,
       "status": "success"
     },
     "Central Supervisor": {
-      "duration_seconds": 2.391,
-      "output_characters": 2020,
+      "duration_seconds": 2.418,
+      "output_characters": 1985,
       "status": "success"
     },
     "Documentation Agent": {
-      "duration_seconds": 47.545,
-      "output_characters": 0,
-      "status": "unavailable",
-      "failure_category": "transient_dependency"
+      "duration_seconds": 1.667,
+      "output_characters": 1625,
+      "status": "success"
     },
     "Agent Recruitment & Governance": {
-      "duration_seconds": 0.001,
-      "status": "deferred_due_to_degraded_cycle",
+      "duration_seconds": 184.45,
+      "status": "unavailable",
       "output_characters": 0
     }
   },
@@ -79,7 +77,7 @@
   "active_custom_agents": [],
   "disabled_core_agents": [],
   "archived_custom_agents": [],
-  "hr_status": "deferred_due_to_degraded_cycle",
+  "hr_status": "unavailable",
   "hr_manager_review": "none",
   "models_used": [
     "gemini-3.5-flash-lite"
@@ -219,9 +217,11 @@
     "tests/test_resilience.py:test_total_execution_budget_is_enforced_between_attempts",
     "tests/test_resilience.py:test_transient_provider_failure_recommends_checkpoint_resume",
     "tests/test_resilience.py:test_unknown_failure_does_not_auto_retry",
+    "tests/test_stage_recovery.py:test_degraded_role_is_not_listed_as_completed_agent",
+    "tests/test_stage_recovery.py:test_documentation_agent_uses_compact_context_retries_transiently_and_reports_truthfully",
     "tests/test_stage_recovery.py:test_optional_role_failure_isolated_then_resumed_from_checkpoint"
   ],
-  "github_run_id": "43469768828",
-  "github_sha": "8bc876316dad8bd473afc1579395900ba580e095",
+  "github_run_id": "43551259724",
+  "github_sha": "c42a1e362e0aeeb0584c798aa6b7779a07e8a1ca",
   "next_step": "Rerun Run Multi-Agent to recover unavailable roles; do not authorize code changes from a degraded run."
 }

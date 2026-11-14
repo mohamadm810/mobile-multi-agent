@@ -27,7 +27,7 @@ class AgentStageRecoveryTests(unittest.TestCase):
                     fail_tester_once["value"] = False
                     raise AgentError("temporary network failure", retryable=True)
                 if role == run_module.DEVELOPER:
-                    return "Implementation plan.\\nPATCH_PROPOSAL_JSON:\\nnone"
+                    return "Implementation plan.\nPATCH_PROPOSAL_JSON:\nnone"
                 if role == run_module.HR:
                     return json.dumps({
                         "summary": "No staffing changes are justified.",
@@ -111,7 +111,7 @@ class AgentStageRecoveryTests(unittest.TestCase):
                         "actions": [],
                     })
                 if role == run_module.DEVELOPER:
-                    return "Plan only.\\nPATCH_PROPOSAL_JSON:\\nnone"
+                    return "Plan only.\nPATCH_PROPOSAL_JSON:\nnone"
                 return f"Verified output for {role}."
 
             registry = {
@@ -162,7 +162,7 @@ class AgentStageRecoveryTests(unittest.TestCase):
                 if role == run_module.HR:
                     raise AssertionError("HR must be deferred after a degraded upstream role")
                 if role == run_module.DEVELOPER:
-                    return "Plan only.\\nPATCH_PROPOSAL_JSON:\\nnone"
+                    return "Plan only.\nPATCH_PROPOSAL_JSON:\nnone"
                 return f"Verified output for {role}."
 
             registry = {"version": 1, "custom_agents": [], "archived_agents": [], "role_overrides": {}, "disabled_agents": []}

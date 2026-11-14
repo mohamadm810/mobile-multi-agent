@@ -394,6 +394,45 @@ class ConcurrentAtomicPersistenceTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
+    def test_hr_retries_transient_failure_with_bounded_prompt(self):
+        from agent.run import run_cycle
+        from agent.roles import HR
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hr_calls = []
+            large_source_evidence = "PRIVATE_SOURCE_EVIDENCE " + ("x" * 5000)
+
+            def generator(role, prompt):
+                if role == HR:
+                    hr_calls.append(prompt)
+                    if len(hr_calls) == 1:
+                        raise AgentError("temporary provider outage", retryable=True)
+                    return json.dumps({
+                        "summary": "No staffing changes are justified by this run.",
+                        "manager_review": "none",
+                        "actions": [],
+                    })
+                return "role output"
+
+            with patch("agent.run.WORKSPACE", root), patch(
+                "agent.run.STATE_FILE", root / "STATE.json"
+            ), patch("agent.run.REPORT_FILE", root / "REPORT.md"), patch(
+                "agent.run.read_state", return_value={"status": "not_started"}
+            ), patch(
+                "agent.run.read_repository_context", return_value=large_source_evidence
+            ), patch("agent.run.TEAM_FILE", root / "TEAM.json"):
+                outputs = run_cycle("test request", generator=generator)
+
+            self.assertEqual(len(outputs), 8)
+            self.assertEqual(len(hr_calls), 2)
+            self.assertLess(len(hr_calls[-1]), 12000)
+            self.assertNotIn("PRIVATE_SOURCE_EVIDENCE", hr_calls[-1])
+            saved_state = json.loads((root / "STATE.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_state["hr_status"], "valid")
+            self.assertNotIn("Agent Recruitment & Governance", saved_state["degraded_agents"])
+
+
     def test_documentation_agent_receives_deterministic_run_evidence(self):
         from agent.run import run_cycle
         with tempfile.TemporaryDirectory() as directory:

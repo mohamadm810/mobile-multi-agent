@@ -541,15 +541,15 @@ def run_cycle(request=None, generator=generate):
     # repository dump or exhaustive test inventory used by technical reviewers.
     # Keeping this prompt bounded reduces latency and transient provider failures.
     hr_prompt = (
-        "USER REQUEST (bounded):\\n" + request[:6000]
-        + "\\n\\nTEAM ROSTER AND GOVERNANCE STATE:\\n"
+        "USER REQUEST (bounded):\n" + request[:6000]
+        + "\n\nTEAM ROSTER AND GOVERNANCE STATE:\n"
         + json.dumps({"custom_agents": custom_agents, "disabled_agents": registry["disabled_agents"],
                       "role_overrides": list(registry["role_overrides"].keys())}, ensure_ascii=False)[:4000]
-        + "\\n\\nPERFORMANCE METRICS (latency and output size; not quality scores):\\n"
+        + "\n\nPERFORMANCE METRICS (latency and output size; not quality scores):\n"
         + json.dumps(role_metrics, ensure_ascii=False)
-        + "\\n\\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\\n"
-        + "\\n\\n".join(f"## {key}\\n{value[:1400]}" for key, value in outputs.items())
-        + "\\n\\nAudit only the supplied evidence. Do not invent staffing needs. "
+        + "\n\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\n"
+        + "\n\n".join(f"## {key}\n{value[:1400]}" for key, value in outputs.items())
+        + "\n\nAudit only the supplied evidence. Do not invent staffing needs. "
         "Return the exact strict JSON schema from your role instructions. "
         "Use an empty actions array unless a concrete, recurring gap is demonstrated. "
         "Apply changes only to non-manager agents; manager concerns require human approval."

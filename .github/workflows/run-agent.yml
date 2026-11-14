@@ -20,6 +20,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Restore checkpoint candidate for workflow reruns
+        if: github.run_attempt > 1
+        run: |
+          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/checkpoint-main
+          if git cat-file -e refs/remotes/origin/checkpoint-main:workspace/CHECKPOINT.json 2>/dev/null; then
+            git show refs/remotes/origin/checkpoint-main:workspace/CHECKPOINT.json > workspace/CHECKPOINT.json
+            echo "Checkpoint candidate restored; Python validates request, source, team, and SHA-256 fingerprints."
+          else
+            echo "No persisted checkpoint found on main; starting without resume data."
+          fi
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"

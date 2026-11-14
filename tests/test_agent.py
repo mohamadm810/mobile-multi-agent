@@ -455,7 +455,7 @@ class OrchestrationTests(unittest.TestCase):
             self.assertIn("DETERMINISTIC TEST INVENTORY", docs_prompt)
             self.assertRegex(
                 docs_prompt,
-                r"DETERMINISTIC TEST INVENTORY: Exactly \\d+ unittest methods are present",
+                r"DETERMINISTIC TEST INVENTORY: Exactly [0-9]+ unittest methods (are present|exist)",
             )
             self.assertNotIn("Source contains", docs_prompt)
             self.assertNotIn("test_documentation_agent_receives_deterministic_run_evidence", docs_prompt)

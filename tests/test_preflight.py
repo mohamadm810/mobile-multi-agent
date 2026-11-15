@@ -2,7 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.preflight import run_preflight
+from unittest.mock import patch
+
+from agent.preflight import main, run_preflight
 
 
 class PreflightTests(unittest.TestCase):
@@ -68,6 +70,20 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("project_request", result["blocking_checks"])
         self.assertIn("required_file:agent/resilience.py", result["blocking_checks"])
+
+    def test_main_persists_blocked_preflight_result_for_operator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            with patch("agent.preflight.ROOT", root), patch.dict("os.environ", {}, clear=True):
+                with self.assertRaises(SystemExit) as caught:
+                    main()
+            self.assertEqual(caught.exception.code, 1)
+            saved = __import__("json").loads(
+                (root / "workspace" / "PREFLIGHT.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved["status"], "blocked")
+            self.assertEqual(saved["model_requests_made"], 0)
+            self.assertTrue(saved["checked_at_utc"])
 
 
 if __name__ == "__main__":

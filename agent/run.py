@@ -13,6 +13,7 @@ from .gemini import AgentError, ATTEMPTED_MODELS, USED_MODELS, generate, reset_r
 from .roles import ANALYST, ARCHITECT, DEVELOPER, DOCS, HR, MANAGER, REVIEWER, TESTER
 from .resilience import CheckpointStore, CircuitBreaker, RunEventJournal, RunStateMachine, call_with_retries
 from .patch_spec import PatchSpecError, validate_patch_spec, patch_proposal_fingerprint
+from .test_feedback import format_test_feedback, load_test_feedback
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace"
@@ -355,11 +356,14 @@ def run_cycle(request=None, generator=generate):
         "Distinguish source-level implementation, unit-test simulation, and behavior observed in this live run."
     )
     unit_test_methods = get_unit_test_inventory()
+    test_feedback = load_test_feedback(WORKSPACE / "TEST_STATUS.json")
+    test_feedback_block = format_test_feedback(test_feedback)
     context += (
         "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
         + str(len(unit_test_methods)) + " unittest methods are present across Python files under tests/. "
         + "Names: " + ", ".join(unit_test_methods) + ". "
         + "Use this exact count and list; do not estimate, omit tests, or claim test files are absent."
+        + "\n\n" + test_feedback_block
     )
     request_fingerprint = hashlib.sha256(request.encode("utf-8")).hexdigest()
     source_fingerprint = repository_fingerprint()
@@ -426,10 +430,12 @@ def run_cycle(request=None, generator=generate):
                 + "\n\nDETERMINISTIC TEST INVENTORY: Exactly "
                 + str(len(unit_test_methods))
                 + " unittest methods exist across tests/. This is an inventory, not a test execution result."
+                + "\n\n" + test_feedback_block
                 + "\n\nLIVE EXECUTION EVIDENCE: Earlier role calls succeeded in this live run. "
                 + "Successful model(s): " + (", ".join(USED_MODELS) or "none recorded")
                 + ". Attempted model(s): " + (", ".join(ATTEMPTED_MODELS) or "none recorded")
-                + ". The separate GitHub Tests workflow result is not available here; do not guess it."
+                + ". The isolated GitHub Tests workflow result is not in this prompt; "
+                + "do not treat the in-job unittest result as that workflow."
             )
         prompt = (
             prompt_context
@@ -547,6 +553,7 @@ def run_cycle(request=None, generator=generate):
                       "role_overrides": list(registry["role_overrides"].keys())}, ensure_ascii=False)[:4000]
         + "\n\nPERFORMANCE METRICS (latency and output size; not quality scores):\n"
         + json.dumps(role_metrics, ensure_ascii=False)
+        + "\n\n" + test_feedback_block
         + "\n\nALL ROLE OUTPUTS FOR EVIDENCE-BASED HR AUDIT:\n"
         + "\n\n".join(f"## {key}\n{value[:1400]}" for key, value in outputs.items())
         + "\n\nAudit only the supplied evidence. Do not invent staffing needs. "
@@ -663,7 +670,8 @@ def run_cycle(request=None, generator=generate):
         f"\nشناسه اجرای GitHub: `{__import__('os').getenv('GITHUB_RUN_ID', 'local')}`",
         f"\nنسخه سورس اجراشده: `{__import__('os').getenv('GITHUB_SHA', 'local/unknown')}`",
         f"\nتعداد متدهای تست موجود در سورس: `{len(unit_test_methods)}`",
-        "\n> این چرخه تحلیل و برنامه‌ریزی است؛ اجرای تست‌های پروژه در گردش‌کار مستقل Tests انجام می‌شود.",
+        "\n> شمارش متدها فقط موجودی سورس است. گردش‌کار مستقل Tests هنوز دروازه ایزوله است.",
+        "\n> " + test_feedback_block,
         f"\nمراحل بازیابی‌شده از checkpoint: {len(resumed_stages)}",
         f"\nوضعیت پیشنهاد تغییر کد: {patch_proposal_status['status']} (تعداد فایل‌ها: {patch_proposal_status['changes']})",
         f"\nنقش‌های نیازمند بازیابی: {', '.join(failed_agents) if failed_agents else 'هیچ‌کدام'}",
@@ -708,6 +716,17 @@ def run_cycle(request=None, generator=generate):
         "models_used": models_used,
         "models_attempted": models_attempted,
         "unit_test_methods": unit_test_methods,
+        "unit_test_execution": {
+            "conclusion": test_feedback["conclusion"],
+            "tests_run": test_feedback["tests_run"],
+            "failures": test_feedback["failures"],
+            "errors": test_feedback["errors"],
+            "skipped": test_feedback["skipped"],
+            "failed_tests": test_feedback["failed_tests"],
+            "head_sha": test_feedback["head_sha"],
+            "reason": test_feedback["reason"],
+            "scope": "in_job_unittest_not_isolated_workflow",
+        },
         "github_run_id": __import__("os").getenv("GITHUB_RUN_ID"),
         "github_sha": __import__("os").getenv("GITHUB_SHA"),
         "next_step": ("Rerun Run Multi-Agent to recover unavailable roles; do not authorize code changes from a degraded run."

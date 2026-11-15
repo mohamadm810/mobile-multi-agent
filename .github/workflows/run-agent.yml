@@ -40,6 +40,8 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
         run: python -m agent.preflight
+      - name: Record in-job unittest result for agent prompts
+        run: python -m agent.test_feedback
       - name: Run eight-role planning and HR governance cycle
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -58,6 +60,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add workspace/REPORT.md workspace/STATE.json
           if [ -f workspace/EVENTS.jsonl ]; then git add workspace/EVENTS.jsonl; fi
+          if [ -f workspace/TEST_STATUS.json ]; then git add workspace/TEST_STATUS.json; fi
           # Keep resumable stage outputs across failed workflow reruns; stage deletion on success.
           if [ -f workspace/CHECKPOINT.json ]; then
             git add workspace/CHECKPOINT.json
@@ -98,6 +101,7 @@ jobs:
             workspace/REPORT.md
             workspace/STATE.json
             workspace/EVENTS.jsonl
+            workspace/TEST_STATUS.json
             workspace/CHECKPOINT.json
             workspace/PATCH_PROPOSAL.json
           if-no-files-found: warn
